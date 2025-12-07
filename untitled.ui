@@ -61,9 +61,9 @@
          </property>
          <layout class="QHBoxLayout" name="horizontalLayout_3">
           <item>
-           <widget class="QLabel" name="lblFPS_Frame">
+           <widget class="QLabel" name="lblResolution">
             <property name="text">
-             <string>Time Frame: 10ms</string>
+             <string>Resolution: 1080p (30fps)</string>
             </property>
            </widget>
           </item>
@@ -113,7 +113,10 @@
           <string notr="true">background-color:black; color: white;</string>
          </property>
          <property name="text">
-          <string>TextLabel</string>
+          <string>Screen</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
          </property>
         </widget>
        </item>
@@ -246,6 +249,9 @@
             <property name="text">
              <string>imgBienSo</string>
             </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
            </widget>
           </item>
           <item>
@@ -276,7 +282,7 @@
              <string notr="true">color: gray;</string>
             </property>
             <property name="text">
-             <string>Thoi gian vao: 15:08:12 07/05/2025</string>
+             <string>Độ chính xác</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>

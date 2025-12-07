@@ -1,17 +1,21 @@
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5 import uic
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QStandardItemModel, QStandardItem
 
 class UI(QMainWindow):
     def __init__(self):
         super().__init__()
         uic.loadUi('untitled.ui', self)
 
+          # Tạo model cho ListView
+        self.listModel = QStandardItemModel()
+        self.listView.setModel(self.listModel)
+
     def setFPS(self, fps):
         self.lblFPS.setText(f"FPS: {fps:.0f}")
-    def setTimeFrame(self, time_frame):
-        self.lblFPS_Frame.setText(f"Time Frame: {time_frame:.2f} ms")
+    def setDoPhanGiai(self, do_phan_giai):
+        self.lblResolution.setText(f"Resolution: {do_phan_giai}")
     def setTimeModel(self, time_model):
         self.lblFPS_Model.setText(f"Time Model: {time_model:.2f} ms")
     def setTimeSystem(self, time_system):
@@ -31,6 +35,10 @@ class UI(QMainWindow):
 
     def setEventButtonVideo(self, func):
         self.btnVideo.clicked.connect(func)
+
+    def addItemListView(self, text):
+        item = QStandardItem(text)
+        self.listModel.insertRow(0, item)
 
     def start(self):
         self.show()

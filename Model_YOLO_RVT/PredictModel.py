@@ -69,10 +69,8 @@ def predict_license_plate(model, frame, size=(640, 640), constrained_length=None
     # Tự động chuyển sang FP16 nếu model đang dùng FP16
     if next(model.parameters()).dtype == torch.float16:
         image_tensor = image_tensor.half()
-    t3 = time.perf_counter() # Kết thúc đo thời gian chuyển lên GPU
-    
+
     print(f"[TIME] Preprocess (CPU): {(t2-t1)*1000:.2f}ms")
-    print(f"[TIME] Transfer to GPU: {(t3-t2)*1000:.2f}ms")
 
     t4 = time.perf_counter() # Đo thời gian model inference
     with torch.no_grad(): # Không cần tính gradient khi dự đoán

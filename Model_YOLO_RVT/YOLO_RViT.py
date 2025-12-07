@@ -10,7 +10,7 @@ from RViT import RViT
 
 #--- YOLO_RViT ---
 class YOLO_RViT(nn.Module):
-    def __init__(self, yolo_path, yolo_target_feature_layer_idx=9,size=(640,640)):
+    def __init__(self, yolo_path, yolo_target_feature_layer_idx=13,size=(640,640)):
         super().__init__()
         self.backbone = YoloBackbone(yolo_path, target_feature_layer_index=yolo_target_feature_layer_idx)
         dummy_input = torch.randn(1, 3, size[0], size[1]).to(DEVICE)
