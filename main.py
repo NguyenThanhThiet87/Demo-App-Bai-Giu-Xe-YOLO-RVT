@@ -10,6 +10,7 @@ from PyQt5.QtGui import QPixmap, QImage
 import sys
 from collections import deque
 import torch
+from LicensePlateTracker import LicensePlateTracker
 from Model_YOLO_RVT.PredictModel import predict_license_plate, load_model_for_prediction
 from UI import UI
 
@@ -45,7 +46,8 @@ class Result:
 
 YOLO_PATH = 'Model_YOLO_RVT\\yolov11s-pytorch-default-v1\\best.pt'
 BEST_CONFIDENCE_THRESHOLD = 0.8
-MAX_FRAME_HISTORY = 20
+MAX_FRAME_HISTORY = 100
+MAX_FRAME_STOPPING = 3
 IMG_SIZE_MODEL = (640, 640)
 FRAME_SIZE = (640, 480)
 FPS_CAMERA = 60
@@ -72,6 +74,12 @@ class System:
         self.signals.update_fps.connect(self._update_fps_ui)
         self.signals.update_result.connect(self._update_result_ui)
 
+        # Thêm tracker
+        self.lp_tracker = LicensePlateTracker(
+            iou_threshold=0.1,         # IoU > 0.3 → cùng object
+            max_missing_frames=15,     # Giữ bbox trong 15 frames (~0.5s @ 30fps)
+        )
+        
         # Queue và Event cho threading 
         self.frame_queue = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
@@ -83,7 +91,7 @@ class System:
         self.thread_read = None
         self.thread_ai = None
 
-        self.history = deque(maxlen=MAX_FRAME_HISTORY)
+        self.history = deque(maxlen=100)
         self.previousLP = Result(None, None, 0.0, 0.0)
 
         self.minFPS = 0
@@ -176,8 +184,12 @@ class System:
             if not ret:
                 break
 
-            frame = cv2.resize(frame, FRAME_SIZE, interpolation=cv2.INTER_LINEAR)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Resize cho display (giữ lại để hiển thị)
+            frame_display = cv2.resize(frame, FRAME_SIZE, interpolation=cv2.INTER_LINEAR)
+            frame_display = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
+            
+            # Giữ frame gốc BGR cho model (GPU sẽ xử lý resize và BGR->RGB)
+            frame_bgr = frame
 
             # Vứt bỏ frame cũ nếu queue đầy
             if not self.frame_queue.empty():
@@ -186,8 +198,8 @@ class System:
                 except queue.Empty:
                     pass
             
-            # Nhét frame mới vào queue
-            self.frame_queue.put(frame)
+            # Nhét frame BGR và RGB vào queue (tuple: (bgr, rgb_for_display))
+            self.frame_queue.put((frame_bgr, frame_display))
 
             # Giới hạn tốc độ đọc frame mô phỏng FPS camera
             elapsed = time.perf_counter() - frame_start
@@ -197,6 +209,8 @@ class System:
 
         cap.release()
         self.stop_event.set()
+        # Reset tracker khi dừng
+        self.lp_tracker.reset()
 
 
     def thread_read_camera(self):
@@ -219,7 +233,11 @@ class System:
                 self.stopAll()
                 break
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # Convert BGR to RGB
+            # Convert BGR to RGB cho display
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Giữ frame BGR gốc cho model (GPU sẽ xử lý BGR->RGB)
+            frame_bgr = frame
 
             # Vứt bỏ frame cũ nếu queue đầy
             if not self.frame_queue.empty():
@@ -228,18 +246,19 @@ class System:
                 except queue.Empty:
                     pass
 
-            # Nhét frame mới vào queue
-            self.frame_queue.put(frame)
+            # Nhét frame BGR và RGB vào queue (tuple: (bgr, rgb_for_display))
+            self.frame_queue.put((frame_bgr, frame_rgb))
 
         cap.release()
         self.stop_event.set()
 
     def thread_process_ai(self):
-        curr_fps = 0
         frame_count = 0
+        is_new_plate = True
+        frame_stopping = 0
         while not self.stop_event.is_set():
             try:
-                frame = self.frame_queue.get(timeout=1)
+                frame_data = self.frame_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
@@ -249,39 +268,115 @@ class System:
                 torch.cuda.empty_cache()
                 print(f"[{frame_count}] CUDA cache cleared")
 
-            h, w, ch = frame.shape
-            bytes_per_line = ch * w
-            q_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            # Lấy frame BGR cho model và RGB cho display
+            if isinstance(frame_data, tuple):
+                frame_bgr, frame_rgb = frame_data
+            else:
+                # Fallback: nếu queue chứa frame cũ (RGB)
+                frame_rgb = frame_data
+                frame_bgr = cv2.cvtColor(frame_data, cv2.COLOR_RGB2BGR)
 
+            frame_h, frame_w, frame_ch = frame_rgb.shape
+            bytes_per_line = frame_ch * frame_w
+            
             t0 = time.perf_counter() # Bắt đầu đo thời gian dự đoán
-            # Predict
-            license_plate, conf = predict_license_plate(self.model, frame, size=IMG_SIZE_MODEL)[0:2]
+            # Predict với BGR frame (GPU sẽ xử lý BGR->RGB và resize)
+            license_plate, conf, detection = predict_license_plate(self.model, frame_bgr, size=IMG_SIZE_MODEL)
             t1 = time.perf_counter() # Kết thúc đo thời gian dự đoán
 
-            # Xử lý kết quả
-            if len(self.history) < MAX_FRAME_HISTORY and conf > BEST_CONFIDENCE_THRESHOLD:
-                pixmap = QPixmap.fromImage(q_img).scaled(
-                    self.window.imgBienSo.width(),
-                    self.window.imgBienSo.height(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation,
+            # Parse detection và scale bbox
+            bbox, conf_det = detection if detection else (None, 0.0)
+            scaled_bbox = None
+            if bbox is not None:
+                bbox_x, bbox_y, bbox_w, bbox_h = bbox
+                scale_x = frame_w / IMG_SIZE_MODEL[0]
+                scale_y = frame_h / IMG_SIZE_MODEL[1]
+                scaled_bbox = (
+                    int(bbox_x * scale_x),
+                    int(bbox_y * scale_y),
+                    int(bbox_w * scale_x),
+                    int(bbox_h * scale_y)
                 )
-                self.history.append(Result(pixmap, license_plate, conf, time.time()))
-            elif len(self.history) > 0:
-                best = max(self.history, key=lambda x: x.confidence)
-                if best.license_plate != self.previousLP.license_plate:
-                    self.previousLP = best
-                    self.displayResult(best.pixmap, best.license_plate, best.confidence)
-                self.history.clear()
+
+            # Update tracker
+            tracked_bbox, tracking_status = self.lp_tracker.update(
+                    scaled_bbox, conf_det, conf 
+                )
             t2 = time.perf_counter() # Kết thúc đo thời gian xử lý kết quả
 
-            # Hiển thị frame lên màn hình - dùng signal để thread-safe
+            # Hiển thị frame với bbox tracking
+            if tracked_bbox is not None:
+                frame_display = frame_rgb.copy()
+                bbox_x, bbox_y, bbox_w, bbox_h = tracked_bbox
+                
+                # Màu và text theo trạng thái
+                if tracking_status == "DETECTED":
+                    color = (0, 255, 0)  # Xanh lá: detection mới
+                    thickness = 2
+                    text = f"NEW {conf*100:.1f}% ({conf_det*100:.1f}%)"
+                    self.history.clear()  # Xóa lịch sử cũ khi có biển số mới
+                    is_new_plate = True
+                elif tracking_status == "TRACKING" or tracking_status == "STOPPING":  # TRACKING
+                    color = (255, 255, 0)  # Vàng: đang tracking
+                    thickness = 3
+                    text = f"TRACKING: {conf*100:.1f}% ({conf_det*100:.1f}%)"
+                    # Lưu vào history
+                    q_img_temp = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888)
+                    pixmap = QPixmap.fromImage(q_img_temp).scaled(
+                            self.window.imgBienSo.width(),
+                            self.window.imgBienSo.height(),
+                            Qt.KeepAspectRatio,
+                            Qt.SmoothTransformation,
+                        )
+                    self.history.append(Result(pixmap, license_plate, conf, time.time()))
+
+                    if tracking_status == "STOPPING":
+                        frame_stopping += 1
+                        if frame_stopping > MAX_FRAME_STOPPING and is_new_plate == True:
+                            best = max(self.history, key=lambda x: x.confidence)
+                            if best.license_plate != self.previousLP.license_plate:
+                                self.previousLP = best
+                                self.displayResult(best.pixmap, best.license_plate, best.confidence)
+                                is_new_plate = False
+                    else:
+                        frame_stopping = 0
+                else: # LOST     
+                    self.history.clear()
+                    is_new_plate = True
+                    frame_stopping = 0
+
+                    
+                # Vẽ rectangle (màu xanh lá)
+                cv2.rectangle(frame_display, (bbox_x, bbox_y), (bbox_x + bbox_w, bbox_y + bbox_h), color, thickness)
+                
+                # Vẽ text (background box cho dễ đọc)
+                (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(frame_display, (bbox_x, bbox_y - text_h - 10), (bbox_x + text_w, bbox_y), color, -1)
+                cv2.putText(frame_display, text, (bbox_x, bbox_y - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                
+                # Convert sang QImage
+                q_img = QImage(frame_display.data,  frame_w, frame_h,  bytes_per_line,  QImage.Format_RGB888)
+            else:
+                print("LOST: "+is_new_plate.__str__()+" - "+len(self.history).__str__() )
+                if is_new_plate == True and len(self.history) > 0: # Chưa trả kết quả cho biển số cũ
+                    best = max(self.history, key=lambda x: x.confidence)
+                    if best.license_plate != self.previousLP.license_plate:
+                        self.previousLP = best
+                        self.displayResult(best.pixmap, best.license_plate, best.confidence)
+                    self.history.clear()
+                
+                # Không có bbox → hiển thị frame gốc
+                q_img = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888)
+            
+            # # Scale và emit signal
             pixmap = QPixmap.fromImage(q_img).scaled(
                 self.window.lblScreen.width(),
                 self.window.lblScreen.height(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
-            )
+            )    
+
             self.signals.update_frame.emit(pixmap)  # Emit signal thay vì gọi trực tiếp
             t3 = time.perf_counter() # Kết thúc đo thời gian hiển thị
 
@@ -290,7 +385,7 @@ class System:
             time_post = (t2 - t1) * 1000
             time_display = (t3 - t2) * 1000
             time_total = (t3 - t0) * 1000
-            print(f"Model: {time_model:.1f}ms | Post: {time_post:.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
+            # print(f"Model: {time_model:.1f}ms | Post: {time_post:.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
 
             if frame_count > 20:
                 self.minInferenceTime = min(self.minInferenceTime, time_model) if self.minInferenceTime > 0 else time_model
@@ -298,16 +393,14 @@ class System:
                 self.minSystemTime = min(self.minSystemTime, time_total) if self.minSystemTime > 0 else time_total
                 self.maxSystemTime = max(self.maxSystemTime, time_total)
 
-
             # Tính FPS
             if time_total > 0:
                 instant_fps = 1000.0 / time_total
-                # curr_fps = 0.9 * curr_fps + 0.1 * instant_fps
                 if frame_count > 20:
                     self.minFPS = min(self.minFPS, instant_fps) if self.minFPS > 0 else instant_fps
                     self.maxFPS = max(self.maxFPS, instant_fps)
 
-            print("Min system: ", f"{self.minSystemTime:.2f}", "Max system: ", f"{self.maxSystemTime:.2f}", "Min inference: ", f"{self.minInferenceTime:.2f}", "Max inference: ", f"{self.maxInferenceTime:.2f}", "Min FPS: ", f"{self.minFPS:.0f}", "Max FPS: ", f"{self.maxFPS:.0f}")
+            # print("Min system: ", f"{self.minSystemTime:.2f}", "Max system: ", f"{self.maxSystemTime:.2f}", "Min inference: ", f"{self.minInferenceTime:.2f}", "Max inference: ", f"{self.maxInferenceTime:.2f}", "Min FPS: ", f"{self.minFPS:.0f}", "Max FPS: ", f"{self.maxFPS:.0f}")
             
             self.signals.update_fps.emit(time_model, time_total, instant_fps)  # Emit signal thay vì gọi trực tiếp
 
@@ -342,4 +435,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     system = System('Model_YOLO_RVT\\final_yolo_rvit_model_E2E_92.pth')
     system.start()
-    sys.exit(app.exec_())
+    sys.exit(app.exec_())   

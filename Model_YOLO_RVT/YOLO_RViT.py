@@ -17,7 +17,7 @@ class YOLO_RViT(nn.Module):
         
         original_backbone_training_mode = self.backbone.training
         with torch.no_grad():
-            dummy_feats = self.backbone(dummy_input)
+            dummy_feats,_ = self.backbone(dummy_input)
         
         yolo_channels = dummy_feats.shape[1]
         h_feat, w_feat = dummy_feats.shape[2], dummy_feats.shape[3]
@@ -28,13 +28,13 @@ class YOLO_RViT(nn.Module):
     def forward(self, x, target=None, teach_ratio=0.5, forced_output_length=None):
         x = x.to(DEVICE)
         t1 = time.perf_counter()    # Bắt đầu đo thời gian backbone
-        feats = self.backbone(x)
+        feats, detect = self.backbone(x)
         t2 = time.perf_counter()    # Kết thúc đo thời gian backbone
         print(f"Backbone time: {(t2 - t1)*1000:.2f} ms")
         output = self.rvit(feats, target, teach_ratio, forced_output_length)
         t3 = time.perf_counter()    # Kết thúc đo thời gian RViT
         print(f"RViT time: {(t3 - t2)*1000:.2f} ms")
-        return output
+        return output, detect
 
     def train(self, mode: bool = True):
         super().train(mode)

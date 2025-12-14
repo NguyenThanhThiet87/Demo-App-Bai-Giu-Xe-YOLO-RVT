@@ -33,4 +33,4 @@ def char_to_indices(text):
         else:
             indices.append(0)
     indices.append(EOS_TOKEN)
-    return torch.tensor(indices, dtype=torch.long)
+    return torch.tensor(indices, dtype=torch.long, device=DEVICE)

@@ -125,8 +125,12 @@ class System:
             if not ret:
                 break
 
-            frame = cv2.resize(frame, FRAME_SIZE, interpolation=cv2.INTER_LINEAR)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # Convert BGR to RGB
+            # Resize cho display (giữ lại để hiển thị)
+            frame_display = cv2.resize(frame, FRAME_SIZE, interpolation=cv2.INTER_LINEAR)
+            frame_display = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
+            
+            # Giữ frame gốc BGR cho model (GPU sẽ xử lý resize và BGR->RGB)
+            frame_bgr = frame
 
             # Vứt bỏ frame cũ nếu queue đầy
             if not self.frame_queue.empty():
@@ -134,8 +138,8 @@ class System:
                     self.frame_queue.get_nowait()
                 except queue.Empty:
                     pass
-            # Nhét frame mới vào queue
-            self.frame_queue.put(frame)
+            # Nhét frame BGR và RGB vào queue (tuple: (bgr, rgb_for_display))
+            self.frame_queue.put((frame_bgr, frame_display))
 
         cap.release()
 
@@ -153,7 +157,11 @@ class System:
                 self.stopAll()
                 break
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # Convert BGR to RGB
+            # Convert BGR to RGB cho display
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Giữ frame BGR gốc cho model (GPU sẽ xử lý BGR->RGB)
+            frame_bgr = frame
 
             # Vứt bỏ frame cũ nếu queue đầy
             if not self.frame_queue.empty():
@@ -162,8 +170,8 @@ class System:
                 except queue.Empty:
                     pass
 
-            # Nhét frame mới vào queue
-            self.frame_queue.put(frame)
+            # Nhét frame BGR và RGB vào queue (tuple: (bgr, rgb_for_display))
+            self.frame_queue.put((frame_bgr, frame_rgb))
 
         cap.release()
 
@@ -173,17 +181,25 @@ class System:
 
         while not self.stop_event.is_set():
             try:
-                frame = self.frame_queue.get(timeout=1)
+                frame_data = self.frame_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
-            h, w, ch = frame.shape
+            # Lấy frame BGR cho model và RGB cho display
+            if isinstance(frame_data, tuple):
+                frame_bgr, frame_rgb = frame_data
+            else:
+                # Fallback: nếu queue chứa frame cũ (RGB)
+                frame_rgb = frame_data
+                frame_bgr = cv2.cvtColor(frame_data, cv2.COLOR_RGB2BGR)
+
+            h, w, ch = frame_rgb.shape
             bytes_per_line = ch * w
-            q_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
 
             t0 = time.perf_counter() # Bắt đầu đo thời gian dự đoán
-            # Predict
-            license_plate, conf = predict_license_plate(self.model, frame, size=IMG_SIZE_MODEL)[0:2]
+            # Predict với BGR frame (GPU sẽ xử lý BGR->RGB và resize)
+            license_plate, conf = predict_license_plate(self.model, frame_bgr, size=IMG_SIZE_MODEL, is_bgr=True)[0:2]
             t1 = time.perf_counter() # Kết thúc đo thời gian dự đoán
 
             # Xử lý kết quả

@@ -18,19 +18,19 @@ def preprocess_image_gpu(frame, frame_size=(640, 640)):
     # frame đang là (H, W, 3) uint8 -> copy lên VRAM rất nhẹ
     tensor = torch.from_numpy(frame).to(DEVICE, non_blocking=True)
     
-    # 2. Đổi trục HWC -> CHW và thêm batch dimension
+    # 3. Đổi trục HWC -> CHW và thêm batch dimension
     tensor = tensor.permute(2, 0, 1).unsqueeze(0) # (1, 3, H, W)
     
-    # 3. Chuyển sang FP16 và chia 255
+    # 4. Chuyển sang FP16 và chia 255
     # Lưu ý: Phải chuyển sang float/half trước khi resize để nội suy chính xác
     tensor = tensor.half() / 255.0 
     
-    # 4. RESIZE TRÊN GPU (Thay thế cv2.resize)
+    # 5. RESIZE TRÊN GPU (Thay thế cv2.resize)
     # PyTorch interpolate cực nhanh trên GPU
     if tensor.shape[-2:] != frame_size:
         tensor = F.interpolate(tensor, size=frame_size, mode='bilinear', align_corners=False)
     
-    # 5. Normalize (Dùng tensor Mean/Std đã convert sang half ở hàm init)
+    # 6. Normalize (Dùng tensor Mean/Std đã convert sang half ở hàm init)
     # Đảm bảo MEAN_TENSOR và STD_TENSOR cũng phải là .half()
     tensor = (tensor - MEAN_TENSOR.half()) / STD_TENSOR.half()
     
@@ -51,35 +51,75 @@ def load_model_for_prediction(checkpoint_path, yolo_base_model_path, size=(640,6
 
     return model
 
+def parse_yolo_raw_output(raw_output, conf_threshold=0.3, img_size=(640, 640)):
+    pred_tensor = raw_output[0]  # (B, 5, N) hoặc (B, N, 5)
+    
+    # Xử lý shape: (1, 5, 8400) → (8400, 5)
+    if pred_tensor.dim() == 3:
+        if pred_tensor.shape[1] == 5:
+            # (B, 5, N) → (N, 5)
+            pred_tensor = pred_tensor[0].T  # (5, N) → (N, 5)
+        else:
+            # (B, N, 5) → (N, 5)
+            pred_tensor = pred_tensor[0]
+    
+    # Format: [x_center_PIXEL, y_center_PIXEL, w_PIXEL, h_PIXEL, conf]
+    # Lọc theo confidence
+    confs = pred_tensor[:, 4]
+    mask = confs > conf_threshold
+    
+    if not mask.any():
+        return None, 0.0
+    
+    # Lấy detection có confidence cao nhất
+    filtered = pred_tensor[mask]
+    best_idx = filtered[:, 4].argmax()
+    best_det = filtered[best_idx]
+    
+    # Parse bbox: (x_center, y_center, w, h) → (x_top_left, y_top_left, w, h)
+    x_center, y_center, w, h, conf = best_det[:5].cpu().numpy()
+    
+    # ✅ GIÁ TRỊ ĐÃ LÀ PIXEL, KHÔNG CẦN NHÂN img_size
+    # Chỉ cần convert sang top-left corner
+    x = int(x_center - w/2)
+    y = int(y_center - h/2)
+    
+    # Clamp về [0, img_size] để tránh vượt biên
+    x = max(0, min(x, img_size[0]))
+    y = max(0, min(y, img_size[1]))
+    w = max(0, min(int(w), img_size[0] - x))
+    h = max(0, min(int(h), img_size[1] - y))
+    
+    bbox = (x, y, w, h)
+    
+    return bbox, float(conf)
+
 def predict_license_plate(model, frame, size=(640, 640), constrained_length=None):
     # --- Giai đoạn 1: Preprocess ---
-    # Không đo thời gian print ở đây nữa để tránh delay I/O
     image_tensor = preprocess_image_gpu(frame, size)
 
     # --- Giai đoạn 2: Inference ---
     with torch.no_grad():
-        outputs_logits = model(image_tensor, target=None, teach_ratio=0.0, forced_output_length=constrained_length)
+        outputs_logits, detections = model(image_tensor, target=None, teach_ratio=0.0, forced_output_length=constrained_length)
     
-    # --- Giai đoạn 3: Postprocess ---
-    # Xử lý ngay trên GPU để giảm tải CPU
+    # --- Giai đoạn 3: Postprocess OCR ---
     probabilities = torch.softmax(outputs_logits, dim=-1)
     max_probs, predicted_indices = torch.max(probabilities, dim=-1)
     
-    # Lấy dữ liệu batch đầu tiên
     pred_indices = predicted_indices[0]
     confidences = max_probs[0]
     
-    # Tìm EOS token trên GPU
-    eos_mask = (pred_indices == 36) # Giả sử 36 là EOS
+    # Tìm EOS token
+    eos_mask = (pred_indices == 36)
     if eos_mask.any():
         eos_pos = torch.nonzero(eos_mask, as_tuple=False)[0, 0].item()
         pred_indices = pred_indices[:eos_pos]
         confidences = confidences[:eos_pos]
         
-    # Chỉ copy kết quả cuối cùng về CPU (Nhẹ hơn nhiều so với copy cả mảng to)
+    overall_conf = torch.mean(confidences).item() if len(confidences) > 0 else 0.0
     predicted_text = index_to_char(pred_indices.cpu().tolist(), include_special_tokens=False)
-    
-    confs = confidences.cpu().tolist()
-    overall_conf = sum(confs) / len(confs) if confs else 0.0
 
-    return predicted_text, overall_conf
+    # --- Giai đoạn 4: Parse bbox ---
+    bbox, conf_det = parse_yolo_raw_output(detections, conf_threshold=0.3, img_size=size)
+
+    return predicted_text, overall_conf, (bbox, conf_det)
