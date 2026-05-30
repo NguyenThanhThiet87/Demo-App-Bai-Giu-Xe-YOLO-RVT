@@ -22,7 +22,7 @@ import onnxruntime as ort
 
 print("Available:", ort.get_available_providers())
 try:
-    session = ort.InferenceSession("D:\\AppBaiDoXe-YOLO_RVT\\AppBaiDoXe-YOLO_RVT\\src\\models\\ONNX\\yolo_rvit_full.onnx", providers=['CUDAExecutionProvider'])
+    session = ort.InferenceSession("d:\\Project_Thiet\\Demo-App-Bai-Giu-Xe-YOLO-RVT\\src\\models\\ONNX\\yolo_rvit_full.onnx", providers=['CUDAExecutionProvider'])
     print("Used:", session.get_providers())
 except Exception as e:
     import traceback

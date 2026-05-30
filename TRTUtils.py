@@ -1,9 +1,39 @@
 import sys
 import os
+import io
 
+# Thiết lập stdout và stderr sang UTF-8 để tránh lỗi mã hóa trên Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
+# --- TỰ ĐỘNG NẠP THƯ VIỆN CUDA ---
 try:
     if getattr(sys, 'frozen', False):
-        os.add_dll_directory(sys._MEIPASS)
+        base_dir = sys._MEIPASS
+        dll_paths = [base_dir]
+    else:
+        dll_paths = []
+        for p in sys.path:
+            if 'site-packages' in p:
+                nvidia_dir = os.path.join(p, 'nvidia')
+                if os.path.exists(nvidia_dir):
+                    for sub in os.listdir(nvidia_dir):
+                        bin_dir = os.path.join(nvidia_dir, sub, 'bin')
+                        if os.path.exists(bin_dir):
+                            dll_paths.append(bin_dir)
+                            
+    for p in dll_paths:
+        if os.path.exists(p):
+            if p not in os.environ.get('PATH', ''):
+                os.environ['PATH'] = p + ';' + os.environ['PATH']
+            if hasattr(os, 'add_dll_directory'):
+                os.add_dll_directory(p)
+except Exception as e:
+    print("CUDA Path Warning in TRTUtils:", e)
+
+try:
     import tensorrt as trt
     TRT_AVAILABLE = True
 except Exception as e:
@@ -21,9 +51,16 @@ class TensorRTConverter:
         """
         Chuyển đổi file ONNX sang TensorRT Engine phù hợp với GPU hiện tại.
         """
+        onnx_file_path = os.path.abspath(os.path.normpath(onnx_file_path))
+        engine_file_path = os.path.abspath(os.path.normpath(engine_file_path))
+
         if not os.path.exists(onnx_file_path):
             print(f"[-] Lỗi: Không tìm thấy file ONNX tại {onnx_file_path}")
             return False
+
+        # Tự động tạo thư mục chứa file engine nếu chưa tồn tại
+        parent_dir = os.path.dirname(os.path.abspath(engine_file_path))
+        os.makedirs(parent_dir, exist_ok=True)
 
         print(f"[*] Đang bắt đầu chuyển đổi: {onnx_file_path} -> {engine_file_path}")
         
@@ -48,6 +85,38 @@ class TensorRTConverter:
             for error in range(parser.num_errors):
                 print(f"[!] ONNX Parse Error: {parser.get_error(error)}")
             return False
+
+        # --- THIẾT LẬP OPTIMIZATION PROFILE CHO DYNAMIC SHAPES ---
+        profile = builder.create_optimization_profile()
+        has_dynamic = False
+        for i in range(network.num_inputs):
+            input_tensor = network.get_input(i)
+            input_name = input_tensor.name
+            input_shape = input_tensor.shape
+            
+            min_shape = []
+            opt_shape = []
+            max_shape = []
+            is_input_dynamic = False
+            
+            for dim in input_shape:
+                if dim < 0:  # TensorRT dùng -1 cho dynamic dimensions
+                    is_input_dynamic = True
+                    has_dynamic = True
+                    min_shape.append(1)
+                    opt_shape.append(1)
+                    max_shape.append(4)
+                else:
+                    min_shape.append(dim)
+                    opt_shape.append(dim)
+                    max_shape.append(dim)
+            
+            if is_input_dynamic:
+                profile.set_shape(input_name, tuple(min_shape), tuple(opt_shape), tuple(max_shape))
+                print(f"[+] Đã thêm Optimization Profile cho input '{input_name}': min={min_shape}, opt={opt_shape}, max={max_shape}")
+                
+        if has_dynamic:
+            config.add_optimization_profile(profile)
 
         # 3. Cấu hình chế độ FP16 (nếu GPU hỗ trợ) để tăng tốc độ
         if fp16_mode:

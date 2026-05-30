@@ -7,30 +7,63 @@ import ctypes
 
 # Nạp thư viện CUDA Runtime
 cudart = None
-try:
-    # Tìm cudart64_110.dll trong PATH (chúng ta đã thêm nó trong main/predict)
-    cudart = ctypes.CDLL('cudart64_110.dll')
-    cudart.cudaMalloc.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t]
-    cudart.cudaMemcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-    cudart.cudaFree.argtypes = [ctypes.c_void_p]
-    cudart.cudaStreamCreate.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
-    cudart.cudaStreamSynchronize.argtypes = [ctypes.c_void_p]
-    
-    cudaMemcpyHostToDevice = 1
-    cudaMemcpyDeviceToHost = 2
-except Exception as e:
-    print(f"Warning: cudart64_110.dll không được nạp. Lỗi: {e}")
+cuda_dlls = ['cudart64_12.dll', 'cudart64_110.dll', 'cudart64_100.dll']
+for dll_name in cuda_dlls:
+    try:
+        cudart = ctypes.CDLL(dll_name)
+        print(f"[+] Loaded CUDA runtime DLL: {dll_name}")
+        break
+    except Exception:
+        continue
+
+if cudart is None:
+    try:
+        for p in sys.path:
+            if 'site-packages' in p:
+                rt_dir = os.path.join(p, 'nvidia', 'cuda_runtime', 'bin')
+                if os.path.exists(rt_dir):
+                    for f in os.listdir(rt_dir):
+                        if f.startswith('cudart64_') and f.endswith('.dll'):
+                            try:
+                                cudart = ctypes.CDLL(os.path.join(rt_dir, f))
+                                print(f"[+] Loaded CUDA runtime DLL from site-packages: {f}")
+                                break
+                            except Exception:
+                                pass
+                    if cudart:
+                        break
+    except Exception as scan_err:
+        print(f"[-] Quét tìm cudart64 failed: {scan_err}")
+
+if cudart is not None:
+    try:
+        cudart.cudaMalloc.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t]
+        cudart.cudaMemcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+        cudart.cudaFree.argtypes = [ctypes.c_void_p]
+        cudart.cudaStreamCreate.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        cudart.cudaStreamSynchronize.argtypes = [ctypes.c_void_p]
+        
+        cudaMemcpyHostToDevice = 1
+        cudaMemcpyDeviceToHost = 2
+    except Exception as e:
+        print(f"Warning: Lỗi thiết lập các hàm CUDA runtime. Lỗi: {e}")
+        cudart = None
+else:
+    print("[-] Lỗi: Không thể tìm thấy hoặc nạp bất kỳ thư viện cudart64 nào!")
 
 class TRTEngineWrapper:
     def __init__(self, engine_path):
         if cudart is None:
-            raise RuntimeError("Thiếu thư viện CUDA C++ (cudart64_110.dll).")
+            raise RuntimeError("Thiếu thư viện CUDA C++ (cudart64).")
             
         import tensorrt as trt
         self.logger = trt.Logger(trt.Logger.WARNING)
         with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
             self.engine = runtime.deserialize_cuda_engine(f.read())
         
+        if self.engine is None:
+            raise RuntimeError(f"Không thể deserialize CUDA engine từ {engine_path}. Hãy kiểm tra tính tương thích của GPU và phiên bản TensorRT.")
+            
         self.context = self.engine.create_execution_context()
         self.trt = trt
         
@@ -62,6 +95,7 @@ class TRTEngineWrapper:
             x = np.array(x, dtype=np.float32)
         if x.dtype != np.float32:
             x = x.astype(np.float32)
+        x = np.ascontiguousarray(x)
             
         input_name = self.input_names[0]
         self.context.set_input_shape(input_name, x.shape)
@@ -108,6 +142,6 @@ class TRTEngineWrapper:
             cudart.cudaMemcpy(outputs[name].ctypes.data_as(ctypes.c_void_p), self.buffers[name][0], out_size, cudaMemcpyDeviceToHost)
             
         logits = outputs.get('logits', outputs.get(self.output_names[0]))
-        detections = outputs.get('detections', None)
+        detections = outputs.get('detections', outputs.get(self.output_names[1]) if len(self.output_names) > 1 else None)
         
         return logits, detections

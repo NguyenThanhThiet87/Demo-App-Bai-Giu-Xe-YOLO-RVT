@@ -46,13 +46,12 @@ def thread_read_video(video_path, frame_queue, stop_event, window_ui, lp_tracker
         ret, frame = cap.read()
         if not ret:
             break
-        # Resize cho display (giữ lại để hiển thị)
-        frame_display = cv2.resize(frame, FRAME_SIZE, interpolation=cv2.INTER_LINEAR)
-        frame_display = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
+        # Convert sang RGB cho display (bỏ qua CPU resize dư thừa để luồng GUI chính tự scale bằng phần cứng)
+        frame_display = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
         # Giữ frame gốc BGR cho model (GPU sẽ xử lý resize và BGR->RGB)
         frame_bgr = frame
-        # Vứt bỏ frame cũ nếu queue đầy
+        # Vứt bỏ frame cũ nếu queue đầy để luôn xử lý frame mới nhất (Cách 1: Real-time giống camera)
         if not frame_queue.empty():
             try:
                 frame_queue.get_nowait()
@@ -61,7 +60,8 @@ def thread_read_video(video_path, frame_queue, stop_event, window_ui, lp_tracker
         
         # Nhét frame BGR và RGB vào queue (tuple: (bgr, rgb_for_display))
         frame_queue.put((frame_bgr, frame_display))
-        # Giới hạn tốc độ đọc frame mô phỏng FPS camera
+        
+        # Giới hạn tốc độ đọc frame mô phỏng FPS thực tế của Video thời gian thực (Cách 1)
         elapsed = time.perf_counter() - frame_start
         sleep_time = frame_delay - elapsed
         if sleep_time > 0:

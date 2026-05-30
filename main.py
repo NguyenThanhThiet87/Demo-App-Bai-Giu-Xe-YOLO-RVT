@@ -15,7 +15,7 @@ if __name__ == '__main__':
     from utils_path import resource_path
     
     app = QApplication(sys.argv)
-    PATH_MODEL = resource_path(r"AI/TensorRT/yolo_rvit_v11s_gru_local_3050ti.engine")
+    PATH_MODEL = resource_path(r"src/models/TensorRT/yolo_rvit_v11s_gru_local_3050ti.engine")
     PATH_ONNX = resource_path(r"src/models/ONNX/yolo_rvit_full.onnx")
 
     if getattr(sys, 'frozen', False):
@@ -42,7 +42,16 @@ if __name__ == '__main__':
             print(f"[-] Lỗi subprocess TensorRT: {e}. Chuyển sang chạy file ONNX...")
             PATH_MODEL = PATH_ONNX
 
-    # Khởi chạy hệ thống với file Model
-    system = System(PATH_MODEL)
+    # Khởi chạy hệ thống với cơ chế tự động lùi (fallback) an toàn
+    try:
+        system = System(PATH_MODEL)
+    except Exception as e:
+        if PATH_MODEL != PATH_ONNX:
+            print(f"[-] Không thể nạp mô hình TensorRT {PATH_MODEL} (Lỗi: {e}). Đang tự động lùi về sử dụng mô hình ONNX...")
+            PATH_MODEL = PATH_ONNX
+            system = System(PATH_MODEL)
+        else:
+            raise e
+            
     system.start()
     sys.exit(app.exec_())

@@ -89,11 +89,11 @@ def setup_environment():
     print("⚙️ BƯỚC 4: CÀI ĐẶT ENGINE AI")
     print("="*60)
     if use_tensorrt:
-        print("[+] Cài đặt TensorRT và ONNXRuntime mới nhất...")
-        run_command(f'"{python_exe}" -m pip install tensorrt==10.1.0 onnxruntime-gpu')
+        print("[+] Cài đặt TensorRT và ONNXRuntime GPU tương thích...")
+        run_command(f'"{python_exe}" -m pip install tensorrt==10.4.0 onnxruntime-gpu==1.19.2')
     else:
         print("[+] Cài đặt ONNXRuntime-GPU (CUDA 12)...")
-        run_command(f'"{python_exe}" -m pip install onnxruntime-gpu')
+        run_command(f'"{python_exe}" -m pip install onnxruntime-gpu==1.19.2')
 
     print("\n" + "="*60)
     print("🎉 HOÀN TẤT CÀI ĐẶT! MÔI TRƯỜNG ĐÃ SẴN SÀNG 100%.")

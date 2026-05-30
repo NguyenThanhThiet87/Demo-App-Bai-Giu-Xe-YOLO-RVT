@@ -1,4 +1,12 @@
 import sys
+import io
+
+# Thiết lập stdout và stderr sang UTF-8 để tránh lỗi mã hóa trên Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 from TRTUtils import TensorRTConverter
 
 if __name__ == "__main__":

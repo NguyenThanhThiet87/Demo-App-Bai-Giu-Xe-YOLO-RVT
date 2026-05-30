@@ -49,6 +49,11 @@ class System:
         self.frame_queue = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
 
+        # Queue và Thread chuyên dụng cho MongoDB chạy nền hoàn toàn độc lập
+        self.mongo_queue = queue.Queue()
+        self.mongo_thread = threading.Thread(target=self._mongo_worker, daemon=True)
+        self.mongo_thread.start()
+
         # Camera (OpenCV)
         self.video_path = None
         self.cap = None
@@ -188,15 +193,9 @@ class System:
                     color = (255, 255, 0)  # Vàng: đang tracking
                     thickness = 3
                     text = f"TRACKING: {conf*100:.1f}% ({conf_det*100:.1f}%)"
-                    # Lưu vào history
-                    q_img_temp = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888)
-                    pixmap = QPixmap.fromImage(q_img_temp).scaled(
-                            self.window.imgBienSo.width(),
-                            self.window.imgBienSo.height(),
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation,
-                        )
-                    self.history.append(Result(pixmap, license_plate, conf, time.time()))
+                    # Lưu vào history (sử dụng QImage.copy() để cô lập vùng nhớ an toàn đa luồng)
+                    q_img_temp = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888).copy()
+                    self.history.append(Result(q_img_temp, license_plate, conf, time.time()))
 
                     if tracking_status == "STOPPING":
                         frame_stopping += 1
@@ -237,15 +236,8 @@ class System:
                 # Không có bbox → hiển thị frame gốc
                 q_img = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888)
 
-            # # Scale và emit signal
-            pixmap = QPixmap.fromImage(q_img).scaled(
-                self.window.lblScreen.width(),
-                self.window.lblScreen.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )    
-
-            self.signals.update_frame.emit(pixmap)  # Emit signal thay vì gọi trực tiếp
+            # Emit QImage trực tiếp để luồng GUI chính xử lý hiển thị
+            self.signals.update_frame.emit(q_img.copy())
             t3 = time.perf_counter() # Kết thúc đo thời gian hiển thị
 
             # In thời gian chi tiết
@@ -276,7 +268,14 @@ class System:
         print("[Thread AI] Stopped.")
 
         # Slot methods - chạy trên main thread
-    def _update_frame_ui(self, pixmap):
+    def _update_frame_ui(self, q_img):
+        # Thực hiện việc tạo QPixmap và scaled trên luồng GUI chính (main thread) để đạt FPS tối đa và an toàn luồng
+        pixmap = QPixmap.fromImage(q_img).scaled(
+            self.window.lblScreen.width(),
+            self.window.lblScreen.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
         self.window.lblScreen.setPixmap(pixmap)
 
     def _update_fps_ui(self, timeModel, timeSystem, fps):
@@ -284,29 +283,55 @@ class System:
         self.window.setTimeSystem(timeSystem)
         self.window.setFPS(fps)
 
-    def _update_result_ui(self, pixmap, license_plate, conf):
+    def _update_result_ui(self, q_img, license_plate, conf):
+        # 1. Thêm kết quả vào ListView một cách an toàn trên luồng chính
+        current_time = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+        self.window.addItemListView(f"{license_plate} - {(conf * 100):.2f}% - {current_time}")
+
+        # 2. Tạo QPixmap từ QImage và scale hiển thị ảnh kết quả
+        pixmap = QPixmap.fromImage(q_img).scaled(
+            self.window.imgBienSo.width(),
+            self.window.imgBienSo.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
         self.window.setLabelBienSo(f"{license_plate}")
         self.window.setLabelTime(f"{(conf * 100):.2f}%")
         self.window.setImgKq(pixmap)
 
-    def displayResult(self, pixmap, license_plate, conf):
-        current_time = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-        self.window.addItemListView(f"{license_plate} - {(conf * 100):.2f}% - {current_time}")
-        # Emit signal thay vì cập nhật UI trực tiếp
-        self.signals.update_result.emit(pixmap, license_plate, conf)
+    def displayResult(self, q_img, license_plate, conf):
+        # Chỉ emit signal, để luồng chính xử lý cập nhật giao diện
+        self.signals.update_result.emit(q_img, license_plate, conf)
 
-        # Lưu kết quả vào MongoDB (chạy trong thread riêng để không block UI)
-        threading.Thread(target=self._save_to_mongo, args=(pixmap, license_plate, conf), daemon=True).start()
+        # Đẩy vào queue nền để MongoDB worker xử lý bất đồng bộ, tuyệt đối không block luồng xử lý AI/GUI
+        self.mongo_queue.put((q_img, license_plate, conf))
 
-    def _save_to_mongo(self, pixmap, license_plate, conf):
-        try:
-            db = MongoDB.get_db()
-            if db is not None:
-                record = ParkingRecord(license_plate, conf, pixmap)
-                db["parking_records"].insert_one(record.to_dict())
-                print(f"[DB] Đã lưu biển số {license_plate} vào MongoDB")
-        except Exception as e:
-            print(f"[DB] Lỗi khi lưu MongoDB: {e}")
+    def _mongo_worker(self):
+        """Luồng chạy nền xử lý lưu trữ MongoDB độc lập hoàn toàn với AI và GUI"""
+        print("[MongoDB Worker] Luồng lưu DB nền đã khởi động.")
+        # Kết nối DB một lần duy nhất lúc khởi động luồng
+        db = MongoDB.get_db()
+        
+        while not self.stop_event.is_set():
+            try:
+                # Đợi có bản ghi cần lưu trong tối đa 1 giây
+                task = self.mongo_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+                
+            q_img, license_plate, conf = task
+            try:
+                if db is None:
+                    db = MongoDB.get_db()
+                    
+                if db is not None:
+                    record = ParkingRecord(license_plate, conf, q_img)
+                    db["parking_records"].insert_one(record.to_dict())
+                    print(f"[DB] Đã lưu biển số {license_plate} vào MongoDB thành công.")
+            except Exception as e:
+                print(f"[DB] Lỗi khi lưu MongoDB: {e}")
+            finally:
+                self.mongo_queue.task_done()
 
     def start(self):
         self.window.setEventButtonCamera(self.handleOpenCamera)
