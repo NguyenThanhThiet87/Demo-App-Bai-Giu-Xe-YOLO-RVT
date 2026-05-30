@@ -1,13 +1,13 @@
-from PyQt5.QtWidgets import QApplication, QMainWindow
-from PyQt5 import uic
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QPixmap, QImage, QStandardItemModel, QStandardItem
+from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QPixmap, QImage, QStandardItemModel, QStandardItem
+from ui_untitled import Ui_MainWindow
 
-class UI(QMainWindow):
+class UI(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
-        uic.loadUi('untitled.ui', self)
-
+        self.setupUi(self)
+        
           # Tạo model cho ListView
         self.listModel = QStandardItemModel()
         self.listView.setModel(self.listModel)
