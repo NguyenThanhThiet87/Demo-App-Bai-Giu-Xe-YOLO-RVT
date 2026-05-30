@@ -34,15 +34,46 @@ import onnxruntime as ort
 class ONNXEngineWrapper:
     def __init__(self, onnx_path):
         # Tự động kích hoạt TensorRT nếu máy có hỗ trợ, nếu không sẽ tự lùi về CUDA, rồi mới đến CPU
-        providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
-        self.session = ort.InferenceSession(onnx_path, providers=providers)
+        providers = [
+            'TensorrtExecutionProvider',
+            ('CUDAExecutionProvider', {
+                'cudnn_conv_algo_search': 'DEFAULT',
+                'arena_extend_strategy': 'kSameAsRequested',
+            }),
+            'CPUExecutionProvider'
+        ]
+        
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        
+        self.session = ort.InferenceSession(onnx_path, sess_options=session_options, providers=providers)
+        self.onnx_path = onnx_path
         self.input_names = [i.name for i in self.session.get_inputs()]
         self.output_names = [o.name for o in self.session.get_outputs()]
         print(f"Loaded ONNX Model: {onnx_path}")
 
     def __call__(self, x):
         ort_inputs = {self.input_names[0]: x}
-        ort_outs = self.session.run(self.output_names, ort_inputs)
+        
+        try:
+            ort_outs = self.session.run(self.output_names, ort_inputs)
+        except Exception as e:
+            print(f"[ONNX] Lỗi chạy CUDA/cuDNN ({e}). Đang tự động chuyển sang CPU...")
+            # Re-initialize session with CPU only to avoid cuDNN crash on fragmented graphs
+            # We need the onnx_path to recreate the session. We can get it from self if we store it.
+            if not hasattr(self, 'onnx_path'):
+                # fallback using private attribute if available
+                model_path = getattr(self.session, '_model_path', None)
+            else:
+                model_path = self.onnx_path
+                
+            if model_path:
+                self.session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+                ort_outs = self.session.run(self.output_names, ort_inputs)
+                print("[ONNX] Đã chạy thành công trên CPU.")
+            else:
+                raise e
+
         print("ORT RESULT", ort_outs)
 
         logits = ort_outs[0]
