@@ -7,6 +7,7 @@ from datetime import datetime
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage
+import numpy as np
 
 from src.schemas.Result import Result
 from src.schemas.SignalEmiiter import SignalEmitter
@@ -153,7 +154,7 @@ class System:
             t0 = time.perf_counter() # Bắt đầu đo thời gian dự đoán
 
             # Predict với BGR frame
-            license_plate, conf, detection = predict_license_plate(self.model, frame_bgr, size=IMG_SIZE_MODEL)
+            license_plate, conf, detection, timing = predict_license_plate(self.model, frame_bgr, size=IMG_SIZE_MODEL)
 
             t1 = time.perf_counter() # Kết thúc đo thời gian dự đoán
 
@@ -179,7 +180,7 @@ class System:
 
             # Hiển thị frame với bbox tracking
             if tracked_bbox is not None:
-                frame_display = frame_rgb.copy()
+                frame_display = frame_rgb  # Dùng trực tiếp, không .copy() để tiết kiệm 3-5ms
                 bbox_x, bbox_y, bbox_w, bbox_h = tracked_bbox
 
                 # Màu và text theo trạng thái
@@ -193,9 +194,17 @@ class System:
                     color = (255, 255, 0)  # Vàng: đang tracking
                     thickness = 3
                     text = f"TRACKING: {conf*100:.1f}% ({conf_det*100:.1f}%)"
-                    # Lưu vào history (sử dụng QImage.copy() để cô lập vùng nhớ an toàn đa luồng)
-                    q_img_temp = QImage(frame_rgb.data, frame_w, frame_h, bytes_per_line, QImage.Format_RGB888).copy()
-                    self.history.append(Result(q_img_temp, license_plate, conf, time.time()))
+                    
+                    # Cắt đúng vùng biển số (thêm 10px lề) để lưu vào history thay vì copy cả bức ảnh 6MB
+                    pad = 10
+                    y1, y2 = max(0, bbox_y - pad), min(frame_h, bbox_y + bbox_h + pad)
+                    x1, x2 = max(0, bbox_x - pad), min(frame_w, bbox_x + bbox_w + pad)
+                    plate_crop = np.ascontiguousarray(frame_rgb[y1:y2, x1:x2])
+                    
+                    if plate_crop.size > 0:
+                        p_h, p_w, p_c = plate_crop.shape
+                        q_img_temp = QImage(plate_crop.data, p_w, p_h, p_c * p_w, QImage.Format_RGB888).copy()
+                        self.history.append(Result(q_img_temp, license_plate, conf, time.time()))
 
                     if tracking_status == "STOPPING":
                         frame_stopping += 1
@@ -241,11 +250,15 @@ class System:
             t3 = time.perf_counter() # Kết thúc đo thời gian hiển thị
 
             # In thời gian chi tiết
-            time_model = (t1 - t0) * 1000
-            time_post = (t2 - t1) * 1000
+            time_pre = timing['preprocess']
+            time_infer = timing['inference']
+            time_post_ai = timing['postprocess']
+            time_post_tracker = (t2 - t1) * 1000
             time_display = (t3 - t2) * 1000
             time_total = (t3 - t0) * 1000
-            # print(f"Model: {time_model:.1f}ms | Post: {time_post:.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
+            time_model = time_pre + time_infer + time_post_ai
+            
+            print(f"Preprocess: {time_pre:.1f}ms | Inference: {time_infer:.1f}ms | Postprocess (AI+Tracker): {(time_post_ai + time_post_tracker):.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
 
             if frame_count > 20:
                 self.minInferenceTime = min(self.minInferenceTime, time_model) if self.minInferenceTime > 0 else time_model

@@ -23,6 +23,11 @@ try:
                         bin_dir = os.path.join(nvidia_dir, sub, 'bin')
                         if os.path.exists(bin_dir):
                             dll_paths.append(bin_dir)
+                
+                # TensorRT DLLs thường nằm ở đây trên Windows
+                trt_libs = os.path.join(p, 'tensorrt_libs')
+                if os.path.exists(trt_libs):
+                    dll_paths.append(trt_libs)
                             
     for p in dll_paths:
         if os.path.exists(p):
@@ -80,7 +85,19 @@ class TensorRTConverter:
         # Thiết lập bộ nhớ đệm (Workspace size) - ví dụ 1GB
         config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
 
-        # 2. Parse file ONNX
+        # 3. Cấu hình chế độ FP16 (nếu GPU hỗ trợ) để tăng tốc độ
+        fp16_onnx_path = onnx_file_path
+        if fp16_mode:
+            try:
+                if hasattr(trt.BuilderFlag, 'FP16'):
+                    config.set_flag(trt.BuilderFlag.FP16)
+                    print("[+] Đã kích hoạt tối ưu hóa FP16 bằng BuilderFlag.")
+                else:
+                    print("[+] TensorRT 11+: Không tìm thấy BuilderFlag.FP16. Sử dụng FP32 mặc định.")
+            except Exception as e:
+                print(f"[-] Kích hoạt FP16 thất bại (Bỏ qua cảnh báo: {e})")
+
+        # 2. Parse file ONNX (sử dụng file gốc)
         if not parser.parse_from_file(onnx_file_path):
             for error in range(parser.num_errors):
                 print(f"[!] ONNX Parse Error: {parser.get_error(error)}")
@@ -117,14 +134,6 @@ class TensorRTConverter:
                 
         if has_dynamic:
             config.add_optimization_profile(profile)
-
-        # 3. Cấu hình chế độ FP16 (nếu GPU hỗ trợ) để tăng tốc độ
-        if fp16_mode:
-            if builder.platform_has_fast_fp16:
-                config.set_flag(trt.BuilderFlag.FP16)
-                print("[+] GPU hỗ trợ chế độ FP16 - Đã kích hoạt tối ưu hóa.")
-            else:
-                print("[!] GPU không hỗ trợ FP16 nhanh - Chuyển về FP32.")
 
         # 4. Build Engine
         print("[*] Đang build engine (quá trình này có thể mất vài phút)...")

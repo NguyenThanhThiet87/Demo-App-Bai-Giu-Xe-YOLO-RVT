@@ -90,30 +90,21 @@ class TRTEngineWrapper:
         print(f"Outputs: {self.output_names}")
 
     def __call__(self, x):
-        # x là numpy array từ preprocess (CPU)
-        if not isinstance(x, np.ndarray):
-            x = np.array(x, dtype=np.float32)
-        if x.dtype != np.float32:
-            x = x.astype(np.float32)
-        x = np.ascontiguousarray(x)
+        import cupy as cp
+        # x là cupy array từ preprocess (GPU)
+        if not isinstance(x, cp.ndarray):
+            x = cp.asarray(x, dtype=cp.float32)
+        if x.dtype != cp.float32:
+            x = x.astype(cp.float32)
+        x = cp.ascontiguousarray(x)
             
         input_name = self.input_names[0]
         self.context.set_input_shape(input_name, x.shape)
         
-        # Cấp phát GPU cho input nếu chưa có hoặc kích thước đổi
-        input_size = x.nbytes
-        if input_name not in self.buffers or self.buffers[input_name][1] < input_size:
-            if input_name in self.buffers:
-                cudart.cudaFree(self.buffers[input_name][0])
-            ptr = ctypes.c_void_p()
-            cudart.cudaMalloc(ctypes.byref(ptr), input_size)
-            self.buffers[input_name] = (ptr.value, input_size)
-            
-        # Copy numpy (CPU) -> GPU (Input)
-        cudart.cudaMemcpy(self.buffers[input_name][0], x.ctypes.data_as(ctypes.c_void_p), input_size, cudaMemcpyHostToDevice)
-        self.context.set_tensor_address(input_name, self.buffers[input_name][0])
+        # Truyền con trỏ bộ nhớ (pointer) của mảng CuPy trực tiếp cho TensorRT
+        self.context.set_tensor_address(input_name, x.data.ptr)
         
-        # Cấp phát GPU cho output
+        # Cấp phát GPU cho output (dùng CuPy)
         outputs = {}
         for name in self.output_names:
             shape = self.engine.get_tensor_shape(name)
@@ -122,25 +113,18 @@ class TRTEngineWrapper:
                 if s == -1: shape[i] = x.shape[i] if i < len(x.shape) else 1
                 
             out_size = np.prod(shape) * 4 # float32 = 4 bytes
-            if name not in self.buffers or self.buffers[name][1] < out_size:
-                if name in self.buffers:
-                    cudart.cudaFree(self.buffers[name][0])
-                ptr = ctypes.c_void_p()
-                cudart.cudaMalloc(ctypes.byref(ptr), out_size)
-                self.buffers[name] = (ptr.value, out_size)
+            if name not in self.buffers or self.buffers[name].size * 4 < out_size:
+                self.buffers[name] = cp.empty(shape, dtype=cp.float32)
                 
-            self.context.set_tensor_address(name, self.buffers[name][0])
-            outputs[name] = np.empty(shape, dtype=np.float32)
+            out_array = self.buffers[name].reshape(shape)
+            self.context.set_tensor_address(name, out_array.data.ptr)
+            outputs[name] = out_array
             
         # Chạy inference trên Stream
         self.context.execute_async_v3(self.stream)
         cudart.cudaStreamSynchronize(self.stream)
         
-        # Copy GPU -> numpy (CPU)
-        for name in self.output_names:
-            out_size = outputs[name].nbytes
-            cudart.cudaMemcpy(outputs[name].ctypes.data_as(ctypes.c_void_p), self.buffers[name][0], out_size, cudaMemcpyDeviceToHost)
-            
+        # Trả về trực tiếp mảng CuPy, không cần Copy GPU -> CPU!
         logits = outputs.get('logits', outputs.get(self.output_names[0]))
         detections = outputs.get('detections', outputs.get(self.output_names[1]) if len(self.output_names) > 1 else None)
         

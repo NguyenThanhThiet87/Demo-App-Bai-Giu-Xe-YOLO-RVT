@@ -53,6 +53,9 @@ class ONNXEngineWrapper:
         print(f"Loaded ONNX Model: {onnx_path}")
 
     def __call__(self, x):
+        if hasattr(x, 'get'):
+            x = x.get()
+            
         ort_inputs = {self.input_names[0]: x}
         
         try:
