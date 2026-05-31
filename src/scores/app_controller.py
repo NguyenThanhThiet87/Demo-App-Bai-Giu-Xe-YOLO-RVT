@@ -22,7 +22,8 @@ MAX_FRAME_STOPPING = 15
 IMG_SIZE_MODEL = (640, 640)
 
 class System:
-    def __init__(self, path_model):
+    def __init__(self, path_model, gpu_name="Unknown GPU"):
+        self.gpu_name = gpu_name
         if path_model.endswith('.engine'):
             self.model = load_model(path_model)
             print(f"Using Model: {path_model}")
@@ -72,6 +73,15 @@ class System:
         self.maxInferenceTime = 0
         self.minSystemTime = 0
         self.maxSystemTime = 0
+        
+        # Biến đếm trung bình
+        self.totalInferenceTime = 0
+        self.totalPreprocessTime = 0
+        self.totalPostprocessTime = 0
+        self.totalDisplayTime = 0
+        self.totalSystemTime = 0
+        self.totalFPS = 0
+        self.frameCountStats = 0
 
     def handleVideo(self):
         # Nếu đang chạy thì dừng
@@ -104,6 +114,62 @@ class System:
         self.thread_ai = threading.Thread(target=self.thread_process_ai, daemon=True)
         self.thread_read.start()
         self.thread_ai.start()
+
+    def handleStop(self):
+        # Tránh bật dialog khi chưa chạy gì
+        if self.thread_read is None or not self.thread_read.is_alive():
+            return
+            
+        self.stopAll()
+        
+        # Tính toán thống kê
+        avg_infer = 0
+        avg_pre = 0
+        avg_post = 0
+        avg_display = 0
+        avg_total = 0
+        avg_fps = 0
+        
+        if self.frameCountStats > 0:
+            avg_infer = self.totalInferenceTime / self.frameCountStats
+            avg_pre = self.totalPreprocessTime / self.frameCountStats
+            avg_post = self.totalPostprocessTime / self.frameCountStats
+            avg_display = self.totalDisplayTime / self.frameCountStats
+            avg_total = self.totalSystemTime / self.frameCountStats
+            avg_fps = self.totalFPS / self.frameCountStats
+            
+        # Hiện hộp thoại báo cáo
+        from PySide6.QtWidgets import QMessageBox
+        msg = QMessageBox(self.window)
+        msg.setWindowTitle("Báo Cáo Hiệu Năng Chi Tiết (Trung Bình)")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(
+            f"📊 Thống kê {self.frameCountStats} khung hình:\n\n"
+            f"🔹 GPU: {self.gpu_name}\n\n"
+            f"⏱️ Preprocess: {avg_pre:.2f} ms\n"
+            f"⏱️ Inference (AI): {avg_infer:.2f} ms\n"
+            f"⏱️ Postprocess (OCR+Tracker): {avg_post:.2f} ms\n"
+            f"⏱️ Display UI: {avg_display:.2f} ms\n\n"
+            f"🔥 Total Time: {avg_total:.2f} ms\n"
+            f"🚀 Average FPS: {avg_fps:.0f} FPS\n"
+        )
+        msg.exec()
+        
+        # Reset stats
+        self.minFPS = 0
+        self.maxFPS = 0
+        self.minInferenceTime = 0
+        self.maxInferenceTime = 0
+        self.minSystemTime = 0
+        self.maxSystemTime = 0
+        
+        self.totalInferenceTime = 0
+        self.totalPreprocessTime = 0
+        self.totalPostprocessTime = 0
+        self.totalDisplayTime = 0
+        self.totalSystemTime = 0
+        self.totalFPS = 0
+        self.frameCountStats = 0
 
     def stopAll(self):
         # Báo hiệu dừng threads
@@ -265,6 +331,13 @@ class System:
                 self.maxInferenceTime = max(self.maxInferenceTime, time_model)
                 self.minSystemTime = min(self.minSystemTime, time_total) if self.minSystemTime > 0 else time_total
                 self.maxSystemTime = max(self.maxSystemTime, time_total)
+                
+                # Cộng dồn tính trung bình
+                self.totalInferenceTime += time_infer
+                self.totalPreprocessTime += time_pre
+                self.totalPostprocessTime += (time_post_ai + time_post_tracker)
+                self.totalDisplayTime += time_display
+                self.totalSystemTime += time_total
 
             # Tính FPS
             if time_total > 0:
@@ -272,6 +345,10 @@ class System:
                 if frame_count > 100:
                     self.minFPS = min(self.minFPS, instant_fps) if self.minFPS > 0 else instant_fps
                     self.maxFPS = max(self.maxFPS, instant_fps)
+                
+                if frame_count > 20:
+                    self.totalFPS += instant_fps
+                    self.frameCountStats += 1
 
             print("Min system: ", f"{self.minSystemTime:.2f}", "Max system: ", f"{self.maxSystemTime:.2f}", "Min inference: ", f"{self.minInferenceTime:.2f}", "Max inference: ", f"{self.maxInferenceTime:.2f}", "Min FPS: ", f"{self.minFPS:.0f}", "Max FPS: ", f"{self.maxFPS:.0f}")
 
@@ -349,4 +426,5 @@ class System:
     def start(self):
         self.window.setEventButtonCamera(self.handleOpenCamera)
         self.window.setEventButtonVideo(self.handleVideo)
+        self.window.setEventButtonStop(self.handleStop)
         self.window.start()

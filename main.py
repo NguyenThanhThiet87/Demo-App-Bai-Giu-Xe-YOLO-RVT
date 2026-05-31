@@ -68,12 +68,12 @@ if __name__ == '__main__':
 
     # Khởi chạy hệ thống với cơ chế tự động lùi (fallback) an toàn
     try:
-        system = System(PATH_MODEL)
+        system = System(PATH_MODEL, gpu_name)
     except Exception as e:
         if PATH_MODEL != PATH_ONNX:
             print(f"[-] Không thể nạp mô hình TensorRT {PATH_MODEL} (Lỗi: {e}). Đang tự động lùi về sử dụng mô hình ONNX...")
             PATH_MODEL = PATH_ONNX
-            system = System(PATH_MODEL)
+            system = System(PATH_MODEL, gpu_name)
         else:
             raise e
             

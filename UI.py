@@ -12,6 +12,14 @@ class UI(QMainWindow, Ui_MainWindow):
         self.listModel = QStandardItemModel()
         self.listView.setModel(self.listModel)
 
+        # Thêm nút Stop vào cạnh nút Video
+        from PySide6.QtWidgets import QPushButton
+        self.btnStop = QPushButton(self.frame_2)
+        self.btnStop.setObjectName("btnStop")
+        self.btnStop.setText("Stop Device")
+        self.btnStop.setStyleSheet("background-color: #555555; color: white; padding: 5px; font-weight: bold;")
+        self.horizontalLayout_2.addWidget(self.btnStop)
+
     def setFPS(self, fps):
         self.lblFPS.setText(f"FPS: {fps:.0f}")
     def setDoPhanGiai(self, do_phan_giai):
@@ -35,6 +43,9 @@ class UI(QMainWindow, Ui_MainWindow):
 
     def setEventButtonVideo(self, func):
         self.btnVideo.clicked.connect(func)
+        
+    def setEventButtonStop(self, func):
+        self.btnStop.clicked.connect(func)
 
     def addItemListView(self, text):
         item = QStandardItem(text)

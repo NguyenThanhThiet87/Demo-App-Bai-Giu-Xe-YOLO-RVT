@@ -43,6 +43,14 @@ if cudart is not None:
         cudart.cudaStreamCreate.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
         cudart.cudaStreamSynchronize.argtypes = [ctypes.c_void_p]
         
+        # Hàm cấu hình CUDA Graph
+        cudart.cudaStreamBeginCapture.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        cudart.cudaStreamEndCapture.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        cudart.cudaGraphInstantiate.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        cudart.cudaGraphLaunch.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        cudart.cudaGraphExecDestroy.argtypes = [ctypes.c_void_p]
+        cudart.cudaGraphDestroy.argtypes = [ctypes.c_void_p]
+        
         cudaMemcpyHostToDevice = 1
         cudaMemcpyDeviceToHost = 2
     except Exception as e:
@@ -85,6 +93,11 @@ class TRTEngineWrapper:
         # Cấp phát bộ nhớ
         self.buffers = {}
         
+        # Cấu trúc cho CUDA Graph
+        self.graph_exec = None
+        self.static_input_shape = None
+        self.static_input_buffer = None
+        
         print(f"Loaded TRT Engine: {engine_path}")
         print(f"Inputs: {self.input_names}")
         print(f"Outputs: {self.output_names}")
@@ -99,12 +112,24 @@ class TRTEngineWrapper:
         x = cp.ascontiguousarray(x)
             
         input_name = self.input_names[0]
-        self.context.set_input_shape(input_name, x.shape)
         
-        # Truyền con trỏ bộ nhớ (pointer) của mảng CuPy trực tiếp cho TensorRT
-        self.context.set_tensor_address(input_name, x.data.ptr)
-        
-        # Cấp phát GPU cho output (dùng CuPy)
+        # --- CƠ CHẾ SAFETY NET CHO CUDA GRAPHS ---
+        # Kiểm tra xem shape có bị đổi so với graph cũ không
+        if self.static_input_shape is not None and x.shape != self.static_input_shape:
+            # Nếu đổi shape, hủy graph cũ đi để tạo lại
+            if self.graph_exec is not None:
+                cudart.cudaGraphExecDestroy(self.graph_exec)
+                self.graph_exec = None
+            self.static_input_shape = None
+            self.static_input_buffer = None
+            print(f"[!] Cảnh báo: Kích thước đầu vào bị thay đổi thành {x.shape}. Hủy CUDA Graph cũ.")
+
+        # Cấp phát mảng tĩnh một lần duy nhất
+        if self.static_input_shape is None:
+            self.static_input_shape = x.shape
+            self.static_input_buffer = cp.empty_like(x)
+            
+        # Cấp phát mảng tĩnh cho outputs
         outputs = {}
         for name in self.output_names:
             shape = self.engine.get_tensor_shape(name)
@@ -115,16 +140,53 @@ class TRTEngineWrapper:
             out_size = np.prod(shape) * 4 # float32 = 4 bytes
             if name not in self.buffers or self.buffers[name].size * 4 < out_size:
                 self.buffers[name] = cp.empty(shape, dtype=cp.float32)
-                
-            out_array = self.buffers[name].reshape(shape)
-            self.context.set_tensor_address(name, out_array.data.ptr)
-            outputs[name] = out_array
-            
-        # Chạy inference trên Stream
-        self.context.execute_async_v3(self.stream)
-        cudart.cudaStreamSynchronize(self.stream)
+            outputs[name] = self.buffers[name].reshape(shape)
+
+        # 1. Copy dữ liệu mới vào mảng tĩnh (giữ nguyên địa chỉ RAM)
+        cp.copyto(self.static_input_buffer, x)
         
-        # Trả về trực tiếp mảng CuPy, không cần Copy GPU -> CPU!
+        # --- THỰC THI (GRAPH HOẶC THÔNG THƯỜNG) ---
+        if self.graph_exec is None:
+            # Lần chạy đầu tiên: Gán địa chỉ tĩnh và Bắt giữ đồ thị (Capture)
+            self.context.set_input_shape(input_name, self.static_input_shape)
+            self.context.set_tensor_address(input_name, self.static_input_buffer.data.ptr)
+            for name in self.output_names:
+                self.context.set_tensor_address(name, outputs[name].data.ptr)
+                
+            # Bắt đầu quay phim (Capture) - mode = 0 (Global)
+            cudart.cudaStreamBeginCapture(self.stream, 0)
+            
+            # Chạy hàm inference thông thường để GPU ghi nhận lệnh
+            self.context.execute_async_v3(self.stream)
+            
+            # Kết thúc quay phim và lưu graph
+            graph = ctypes.c_void_p()
+            cudart.cudaStreamEndCapture(self.stream, ctypes.byref(graph))
+            
+            # Biến bản vẽ thành Graph Executable
+            graph_exec = ctypes.c_void_p()
+            ret = cudart.cudaGraphInstantiate(ctypes.byref(graph_exec), graph, None, None, 0)
+            if ret == 0 and graph_exec.value is not None:
+                self.graph_exec = graph_exec
+                print(f"[+] CUDA Graph đã được ghi nhận thành công ({self.static_input_shape})!")
+                # Lệnh execute_async_v3 ở trên chỉ là "ghi âm" chứ không chạy thật.
+                # Do đó, ta phải Launch Graph ngay lập tức để Frame đầu tiên có kết quả thay vì trả về mảng rỗng (rác/NaN).
+                cudart.cudaGraphLaunch(self.graph_exec, self.stream)
+            else:
+                print(f"[-] Lỗi khi Instantiate CUDA Graph (mã lỗi: {ret}). Fallback về chạy thường.")
+                # Nếu ghi hình lỗi, chạy lại lệnh bình thường
+                self.context.execute_async_v3(self.stream)
+                
+            cudart.cudaGraphDestroy(graph)
+            
+            # Đảm bảo lệnh inference vừa khởi chạy đã xong cho frame đầu tiên
+            cudart.cudaStreamSynchronize(self.stream)
+        else:
+            # Các frame tiếp theo: Bỏ qua mọi bước CPU, phóng trực tiếp Graph đã ghi nhớ!
+            cudart.cudaGraphLaunch(self.graph_exec, self.stream)
+            cudart.cudaStreamSynchronize(self.stream)
+        
+        # Trả về kết quả
         logits = outputs.get('logits', outputs.get(self.output_names[0]))
         detections = outputs.get('detections', outputs.get(self.output_names[1]) if len(self.output_names) > 1 else None)
         

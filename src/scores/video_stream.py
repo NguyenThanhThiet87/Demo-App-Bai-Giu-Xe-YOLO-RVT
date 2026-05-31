@@ -76,6 +76,7 @@ def thread_read_camera(camera_index, frame_queue, stop_event, window_ui, system_
     cap.set(cv2.CAP_PROP_FPS, FPS_CAMERA)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_SIZE[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_SIZE[1])
+    
     # Kiểm tra FPS thực của camera
     actual_fps = cap.get(cv2.CAP_PROP_FPS)
     actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
