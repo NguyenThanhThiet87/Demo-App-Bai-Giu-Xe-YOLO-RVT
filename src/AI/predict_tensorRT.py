@@ -18,22 +18,43 @@ for dll_name in cuda_dlls:
 
 if cudart is None:
     try:
-        for p in sys.path:
-            if 'site-packages' in p:
-                rt_dir = os.path.join(p, 'nvidia', 'cuda_runtime', 'bin')
-                if os.path.exists(rt_dir):
-                    for f in os.listdir(rt_dir):
-                        if f.startswith('cudart64_') and f.endswith('.dll'):
-                            try:
-                                cudart = ctypes.CDLL(os.path.join(rt_dir, f))
-                                print(f"[+] Loaded CUDA runtime DLL from site-packages: {f}")
-                                break
-                            except Exception:
-                                pass
-                    if cudart:
+        # Tạo danh sách đường dẫn cần quét
+        search_paths = list(sys.path)
+        
+        # Khi chạy dưới dạng .exe (frozen), thêm thư mục _internal vào danh sách quét
+        if getattr(sys, 'frozen', False):
+            _exe_dir = os.path.dirname(sys.executable)
+            _internal_dir = os.path.join(_exe_dir, '_internal')
+            search_paths = [_internal_dir, _exe_dir] + search_paths
+            
+            # Thử load trực tiếp từ _internal trước
+            for f in os.listdir(_internal_dir) if os.path.exists(_internal_dir) else []:
+                if f.startswith('cudart64_') and f.endswith('.dll'):
+                    try:
+                        cudart = ctypes.CDLL(os.path.join(_internal_dir, f))
+                        print(f"[+] Loaded CUDA runtime DLL from _internal: {f}")
                         break
+                    except Exception:
+                        pass
+
+        if cudart is None:
+            for p in search_paths:
+                if 'site-packages' in p or getattr(sys, 'frozen', False):
+                    rt_dir = os.path.join(p, 'nvidia', 'cuda_runtime', 'bin')
+                    if os.path.exists(rt_dir):
+                        for f in os.listdir(rt_dir):
+                            if f.startswith('cudart64_') and f.endswith('.dll'):
+                                try:
+                                    cudart = ctypes.CDLL(os.path.join(rt_dir, f))
+                                    print(f"[+] Loaded CUDA runtime DLL from site-packages: {f}")
+                                    break
+                                except Exception:
+                                    pass
+                        if cudart:
+                            break
     except Exception as scan_err:
         print(f"[-] Quét tìm cudart64 failed: {scan_err}")
+
 
 if cudart is not None:
     try:

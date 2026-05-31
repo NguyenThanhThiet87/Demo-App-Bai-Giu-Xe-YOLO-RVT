@@ -1,11 +1,34 @@
 
 import sys
+import os
+
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
-  
-import sys
+
+# --- BOOTSTRAP: Thiết lập đường dẫn CUDA DLL khi chạy dưới dạng file .exe đóng gói ---
+# Khi PyInstaller đóng gói, các DLL nằm trong thư mục _internal (cùng cấp với .exe)
+# CuPy và ONNXRuntime cần biết đường dẫn này để tải đúng cudart64_12.dll, cublas64_12.dll, v.v.
+if getattr(sys, 'frozen', False):
+    # Thư mục chứa file .exe
+    _exe_dir = os.path.dirname(sys.executable)
+    # Thư mục _internal chứa tất cả các thư viện được đóng gói
+    _internal_dir = os.path.join(_exe_dir, '_internal')
+    
+    # Thêm _internal vào đầu PATH để Windows tìm DLL ở đây trước
+    if _internal_dir not in os.environ.get('PATH', ''):
+        os.environ['PATH'] = _internal_dir + os.pathsep + os.environ.get('PATH', '')
+    
+    # Cũng thêm vào CUDA_PATH để CuPy tìm thấy
+    os.environ.setdefault('CUDA_PATH', _internal_dir)
+    
+    # Dùng os.add_dll_directory (Python 3.8+) để đăng ký thư mục tìm kiếm DLL
+    if hasattr(os, 'add_dll_directory'):
+        os.add_dll_directory(_internal_dir)
+        # Cũng đăng ký thư mục gốc exe
+        os.add_dll_directory(_exe_dir)
+
 from PySide6.QtWidgets import QApplication
 # Nạp app_controller (chứa onnxruntime) TRƯỚC để thiết lập đúng các thư mục DLL CUDA 12
 from src.scores.app_controller import System
@@ -34,6 +57,39 @@ def get_gpu_name():
         return "unknown_gpu"
 
 if __name__ == '__main__':
+    import sys
+    import os
+    import subprocess
+    import atexit
+
+    # --- Đóng vai trò là tiến trình con để Build TensorRT nếu được gọi bằng tham số ---
+    if len(sys.argv) == 4 and sys.argv[1] == '--build-trt':
+        path_onnx = sys.argv[2]
+        path_model = sys.argv[3]
+        try:
+            from TRTUtils import TensorRTConverter
+            converter = TensorRTConverter()
+            if not converter.check_engine_compatibility(path_model):
+                print("[*] Phát hiện engine không tương thích. Đang tiến hành build lại cho GPU này...")
+                success = converter.convert_onnx_to_engine(path_onnx, path_model)
+                sys.exit(0 if success else 1)
+            else:
+                sys.exit(0)
+        except Exception as e:
+            print(f"[-] Lỗi TensorRT subprocess: {e}")
+            sys.exit(1)
+
+    # --- Logic chính của chương trình ---
+    def reset_gpu_clocks():
+        try:
+            print("\n[*] Đang khôi phục GPU về chế độ an toàn tự động làm mát...")
+            subprocess.run(['nvidia-smi', '-rgc'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        except:
+            pass
+
+    # Đăng ký chạy hàm reset khi tắt app
+    atexit.register(reset_gpu_clocks)
+
     from utils_path import resource_path
     
     app = QApplication(sys.argv)
@@ -42,29 +98,27 @@ if __name__ == '__main__':
     PATH_MODEL = resource_path(f"src/models/TensorRT/yolo_rvit_v11s_gru_local_{gpu_name}.engine")
     PATH_ONNX = resource_path(r"src/models/ONNX/yolo_rvit_full.onnx")
 
-    if getattr(sys, 'frozen', False):
-        # Khi đóng gói exe: chỉ kiểm tra file engine có tồn tại không
-        import os
-        if not os.path.exists(PATH_MODEL):
-            print("[*] Không tìm thấy file engine TensorRT. Chuyển sang chạy file ONNX...")
-            PATH_MODEL = PATH_ONNX
+    # Tự động gọi quy trình Build TensorRT (tách process để giải phóng bộ nhớ GPU sau khi build)
+    try:
+        if getattr(sys, 'frozen', False):
+            # Nếu chạy bằng file .exe, gọi lại chính file .exe với tham số ngầm
+            trt_cmd = [sys.executable, '--build-trt', PATH_ONNX, PATH_MODEL]
         else:
-            print(f"[*] Tìm thấy engine TensorRT: {PATH_MODEL}")
-    else:
-        # Khi chạy từ source: gọi subprocess để kiểm tra/build TensorRT engine
-        trt_script = resource_path("trt_builder.py")
-        try:
-            print("[*] Đang kiểm tra/build TensorRT engine trong tiến trình con...")
-            result = subprocess.run(
-                [sys.executable, trt_script, PATH_ONNX, PATH_MODEL],
-                capture_output=False
-            )
-            if result.returncode != 0:
-                print("[-] Lỗi TensorRT (tiến trình build thất bại). Chuyển sang chạy file ONNX...")
-                PATH_MODEL = PATH_ONNX
-        except Exception as e:
-            print(f"[-] Lỗi subprocess TensorRT: {e}. Chuyển sang chạy file ONNX...")
+            # Nếu chạy bằng file python, gọi file trt_builder.py
+            trt_script = resource_path("trt_builder.py")
+            trt_cmd = [sys.executable, trt_script, PATH_ONNX, PATH_MODEL]
+
+        print("[*] Đang kiểm tra/build TensorRT engine trong tiến trình con...")
+        result = subprocess.run(
+            trt_cmd,
+            capture_output=False
+        )
+        if result.returncode != 0:
+            print("[-] Lỗi TensorRT (tiến trình build thất bại). Chuyển sang chạy file ONNX...")
             PATH_MODEL = PATH_ONNX
+    except Exception as e:
+        print(f"[-] Lỗi subprocess TensorRT: {e}. Chuyển sang chạy file ONNX...")
+        PATH_MODEL = PATH_ONNX
 
     # Khởi chạy hệ thống với cơ chế tự động lùi (fallback) an toàn
     try:
