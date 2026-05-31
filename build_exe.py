@@ -74,11 +74,14 @@ def build_executable():
         VENV_PYTHON, "-m", "PyInstaller",
         "--noconfirm",
         "--onedir",
-        "--windowed",
+        "--console",  # Giữ lại cửa sổ Console (Terminal) để hiển thị log và tiến trình cho người dùng
         "--name", "AI_Parking",
         "--add-data", "src/models/ONNX;src/models/ONNX",
         "--hidden-import", "tensorrt",
-        "--hidden-import", "cupy",
+        "--collect-all", "cupy",
+        "--collect-all", "cupy_backends",
+        "--collect-all", "cupyx",
+        "--hidden-import", "graphlib",
         "--hidden-import", "cv2",
         "--hidden-import", "pymongo",
         "--hidden-import", "PySide6",
@@ -90,6 +93,14 @@ def build_executable():
     if result.returncode == 0:
         # Copy them CUDA DLL vao thu muc _internal sau khi build xong
         copy_cuda_dlls_post_build()
+        
+        # Copy file .env vao thu muc chinh de nguoi dung co the chinh sua thong tin ket noi
+        if os.path.exists(".env"):
+            import shutil
+            dest_env = os.path.join("dist", "AI_Parking", ".env")
+            shutil.copy2(".env", dest_env)
+            print("[+] Da copy file .env ra thu muc dist/AI_Parking/")
+
         print("=" * 60)
         print("[+] DONG GOI HOAN TAT!")
         print("[+] Tim thay phan mem tai: dist/AI_Parking/")
