@@ -300,7 +300,7 @@ class System:
                 # Convert sang QImage
                 q_img = QImage(frame_display.data,  frame_w, frame_h,  bytes_per_line,  QImage.Format_RGB888)
             else:
-                print("LOST: "+is_new_plate.__str__()+" - "+len(self.history).__str__() )
+                # print("LOST: "+is_new_plate.__str__()+" - "+len(self.history).__str__() )
                 if is_new_plate == True and len(self.history) > 0: # Chưa trả kết quả cho biển số cũ
                     best = max(self.history, key=lambda x: x.confidence)
                     if best.license_plate != self.previousLP.license_plate:
@@ -324,7 +324,9 @@ class System:
             time_total = (t3 - t0) * 1000
             time_model = time_pre + time_infer + time_post_ai
             
-            print(f"Preprocess: {time_pre:.1f}ms | Inference: {time_infer:.1f}ms | Postprocess (AI+Tracker): {(time_post_ai + time_post_tracker):.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
+            # [Tối ưu] Đóng băng lệnh in ra Console liên tục để tránh hiện tượng thắt cổ chai (bottleneck) 
+            # của Windows Console khi đóng gói ra file exe, giúp tăng ổn định FPS.
+            # print(f"Preprocess: {time_pre:.1f}ms | Inference: {time_infer:.1f}ms | Postprocess (AI+Tracker): {(time_post_ai + time_post_tracker):.1f}ms | Display: {time_display:.1f}ms | Total: {time_total:.1f}ms")
 
             if frame_count > 20:
                 self.minInferenceTime = min(self.minInferenceTime, time_model) if self.minInferenceTime > 0 else time_model
@@ -350,7 +352,7 @@ class System:
                     self.totalFPS += instant_fps
                     self.frameCountStats += 1
 
-            print("Min system: ", f"{self.minSystemTime:.2f}", "Max system: ", f"{self.maxSystemTime:.2f}", "Min inference: ", f"{self.minInferenceTime:.2f}", "Max inference: ", f"{self.maxInferenceTime:.2f}", "Min FPS: ", f"{self.minFPS:.0f}", "Max FPS: ", f"{self.maxFPS:.0f}")
+            # print("Min system: ", f"{self.minSystemTime:.2f}", "Max system: ", f"{self.maxSystemTime:.2f}", "Min inference: ", f"{self.minInferenceTime:.2f}", "Max inference: ", f"{self.maxInferenceTime:.2f}", "Min FPS: ", f"{self.minFPS:.0f}", "Max FPS: ", f"{self.maxFPS:.0f}")
 
             self.signals.update_fps.emit(time_model, time_total, instant_fps)  # Emit signal thay vì gọi trực tiếp
 
@@ -364,7 +366,7 @@ class System:
             self.window.lblScreen.width(),
             self.window.lblScreen.height(),
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self.window.lblScreen.setPixmap(pixmap)
 
@@ -383,7 +385,7 @@ class System:
             self.window.imgBienSo.width(),
             self.window.imgBienSo.height(),
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self.window.setLabelBienSo(f"{license_plate}")
         self.window.setLabelTime(f"{(conf * 100):.2f}%")

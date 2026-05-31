@@ -1,9 +1,18 @@
 import os
+import sys
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from utils_path import resource_path
 
-load_dotenv(resource_path('.env'), override=True)
+def get_env_path():
+    if getattr(sys, 'frozen', False):
+        # Khi chạy bằng file .exe, file .env nằm cùng cấp với file .exe
+        return os.path.join(os.path.dirname(sys.executable), '.env')
+    else:
+        # Khi chạy bằng mã nguồn, file .env nằm ở thư mục gốc
+        return os.path.join(os.path.abspath(os.path.dirname(__file__)), '.env')
+
+load_dotenv(get_env_path(), override=True)
 
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "AppBaiDoXe")

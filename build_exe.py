@@ -15,6 +15,67 @@ if not os.path.exists(VENV_PYTHON):
 NVIDIA_PKG_DIR = os.path.join(BASE_DIR, '.venv', 'Lib', 'site-packages', 'nvidia')
 
 
+def cleanup_dist_post_build():
+    """Don dep cac file rác va di chuyen CUDA DLL ra thu muc goc de chong trung lap."""
+    internal_dir = os.path.join(BASE_DIR, 'dist', 'AI_Parking', '_internal')
+    if not os.path.exists(internal_dir):
+        return
+
+    print("\n[*] Dang don dep cac file rac va DLL trung lap de toi uu dung luong...")
+    saved_bytes = 0
+
+    # 1. Xoa cac file TensorRT phien ban 11 (Vi Python tensorrt dang cai la ban 10)
+    # Trong thu muc tensorrt_libs hien tai dang bi duplicate ca 2 bo TRT 10 va TRT 11 (ton 2.2 GB).
+    # Vi tensorrt.pyd la ban 10 nen no chi load cac file _10.dll, ta co the xoa toan bo cac file _11.dll ma khong so bi crash.
+    trt_libs_dir = os.path.join(internal_dir, 'tensorrt_libs')
+    if os.path.exists(trt_libs_dir):
+        for f in os.listdir(trt_libs_dir):
+            if f.endswith('_11.dll'):
+                filepath = os.path.join(trt_libs_dir, f)
+                try:
+                    size = os.path.getsize(filepath)
+                    os.remove(filepath)
+                    saved_bytes += size
+                    print(f"  [-] Da xoa file TensorRT phien ban cu/thua: {f} (-{size/1024/1024:.1f} MB)")
+                except Exception as e:
+                    pass
+
+    # 2. Di chuyen TAT CA cac file DLL tu thu muc nvidia ra thu muc goc _internal
+    # Vi mot so DLL (nhu nvrtc-builtins) duoc load dong, nen no phai nam cung cho voi nvrtc chinh.
+    nvidia_dir = os.path.join(internal_dir, 'nvidia')
+    if os.path.exists(nvidia_dir):
+        copied = 0
+        for root, dirs, files in os.walk(nvidia_dir):
+            for file in files:
+                if file.endswith('.dll'):
+                    src = os.path.join(root, file)
+                    dst = os.path.join(internal_dir, file)
+                    if not os.path.exists(dst):
+                        import shutil
+                        shutil.copy2(src, dst)
+                        copied += 1
+        print(f"  [+] Da di chuyen {copied} file CUDA DLL an ra thu muc goc de dam bao hoat dong on dinh.")
+        
+        # 3. Xoa toan bo thu muc nvidia de triet tieu su nhan ban (Tiet kiem ~2GB)
+        try:
+            import shutil
+            # Tinh toan dung luong thu muc
+            def get_dir_size(path):
+                total = 0
+                for r, d, f in os.walk(path):
+                    for file in f:
+                        total += os.path.getsize(os.path.join(r, file))
+                return total
+            dir_size = get_dir_size(nvidia_dir)
+            shutil.rmtree(nvidia_dir)
+            saved_bytes += dir_size
+            print(f"  [-] Da xoa thu muc nvidia nhan ban (-{dir_size/1024/1024:.1f} MB)")
+        except Exception as e:
+            print(f"  [-] Khong the xoa thu muc nvidia: {e}")
+                            
+    print(f"[+] Don dep hoan tat! Tong dung luong tiet kiem duoc: {saved_bytes/1024/1024/1024:.2f} GB")
+
+
 def get_nvidia_add_data_args():
     """Thu thap cac thu vien CUDA DLL tu nvidia pip packages de nhung vao exe."""
     args = []
@@ -31,30 +92,9 @@ def get_nvidia_add_data_args():
     return args
 
 
-def copy_cuda_dlls_post_build():
-    """Sau khi build, copy them cac CUDA DLL can thiet vao thu muc _internal de onnxruntime tim thay."""
-    internal_dir = os.path.join(BASE_DIR, 'dist', 'AI_Parking', '_internal')
-    if not os.path.exists(NVIDIA_PKG_DIR) or not os.path.exists(internal_dir):
-        return
-
-    print("\n[*] Dang copy CUDA DLLs vao thu muc dist...")
-    copied = 0
-    for pkg in os.listdir(NVIDIA_PKG_DIR):
-        bin_dir = os.path.join(NVIDIA_PKG_DIR, pkg, 'bin')
-        if os.path.isdir(bin_dir):
-            for dll in os.listdir(bin_dir):
-                if dll.endswith('.dll'):
-                    src = os.path.join(bin_dir, dll)
-                    dst = os.path.join(internal_dir, dll)
-                    if not os.path.exists(dst):
-                        shutil.copy2(src, dst)
-                        copied += 1
-    print(f"[+] Da copy {copied} CUDA DLL files vao _internal/")
-
-
 def build_executable():
     print("=" * 60)
-    print("[*] BAT DAU QUA TRINH DONG GOI PHAN MEM THANH FILE .EXE")
+    print("[*] BAT DAU QUA TRINH DONG GOI PHAN MEM THANH FILE .EXE (TOI UU DUNG LUONG & HIEU SUAT)")
     print(f"[*] Su dung Python: {VENV_PYTHON}")
     print("=" * 60)
 
@@ -85,14 +125,15 @@ def build_executable():
         "--hidden-import", "cv2",
         "--hidden-import", "pymongo",
         "--hidden-import", "PySide6",
-    ] + nvidia_args + ["main.py"]
+        "main.py"
+    ] + nvidia_args
 
     print("\n[*] Dang chay lenh PyInstaller (Qua trinh nay co the mat 5-10 phut)...")
     result = subprocess.run(cmd)
 
     if result.returncode == 0:
-        # Copy them CUDA DLL vao thu muc _internal sau khi build xong
-        copy_cuda_dlls_post_build()
+        # Chay tap lenh don dep toi uu dung luong va chong trung lap DLL sau khi build xong
+        cleanup_dist_post_build()
         
         # Copy file .env vao thu muc chinh de nguoi dung co the chinh sua thong tin ket noi
         if os.path.exists(".env"):
@@ -110,7 +151,6 @@ def build_executable():
         print("=" * 60)
         print("[-] DONG GOI THAT BAI! Kiem tra log ben tren de tim loi.")
         print("=" * 60)
-
 
 if __name__ == "__main__":
     build_executable()
