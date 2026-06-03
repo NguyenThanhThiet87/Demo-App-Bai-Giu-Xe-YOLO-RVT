@@ -4,7 +4,7 @@ import time
 import cv2
 from collections import deque
 from datetime import datetime
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage
 import numpy as np
@@ -139,7 +139,6 @@ class System:
             avg_fps = self.totalFPS / self.frameCountStats
             
         # Hiện hộp thoại báo cáo
-        from PySide6.QtWidgets import QMessageBox
         msg = QMessageBox(self.window)
         msg.setWindowTitle("Báo Cáo Hiệu Năng Chi Tiết (Trung Bình)")
         msg.setIcon(QMessageBox.Information)

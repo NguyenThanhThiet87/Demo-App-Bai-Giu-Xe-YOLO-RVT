@@ -8,7 +8,7 @@ python-dotenv
 onnxruntime-gpu>=1.20.0
 tensorrt>=10.4.0,<11.0.0
 
-# LƯU Ý: Nếu cài đặt trên máy dùng CUDA 11, hãy đổi `cupy-cuda12x` thành `cupy-cuda11x`
+# LUU Y: Neu cai dat tren may dung CUDA 11, hay doi `cupy-cuda12x` thanh `cupy-cuda11x`
 cupy-cuda12x
 nvidia-cuda-runtime-cu12
 nvidia-cublas-cu12

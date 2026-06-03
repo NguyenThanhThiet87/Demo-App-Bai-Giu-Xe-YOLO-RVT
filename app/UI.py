@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap, QImage, QStandardItemModel, QStandardItem
 from ui_untitled import Ui_MainWindow
@@ -13,7 +13,6 @@ class UI(QMainWindow, Ui_MainWindow):
         self.listView.setModel(self.listModel)
 
         # Thêm nút Stop vào cạnh nút Video
-        from PySide6.QtWidgets import QPushButton
         self.btnStop = QPushButton(self.frame_2)
         self.btnStop.setObjectName("btnStop")
         self.btnStop.setText("Stop Device")

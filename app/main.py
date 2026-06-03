@@ -28,11 +28,31 @@ if getattr(sys, 'frozen', False):
         os.add_dll_directory(_internal_dir)
         # Cũng đăng ký thư mục gốc exe
         os.add_dll_directory(_exe_dir)
-
+        
+    # --- MONKEYPATCH: Sửa lỗi CuPy tìm thư mục bin không tồn tại khi đóng gói ---
+    try:
+        import cupy._environment
+        _orig_setup = cupy._environment._setup_win32_dll_directory
+        def safe_setup_win32_dll_directory():
+            try:
+                _orig_setup()
+            except Exception:
+                # Bỏ qua lỗi FileNotFoundError khi không tìm thấy thư mục CUDA bin trên máy người dùng
+                pass
+        cupy._environment._setup_win32_dll_directory = safe_setup_win32_dll_directory
+    except Exception:
+        pass
+# --- IMPORTS ---
+import re
+import atexit
+import subprocess
+import runpy
 from PySide6.QtWidgets import QApplication
+
 # Nạp app_controller (chứa onnxruntime) TRƯỚC để thiết lập đúng các thư mục DLL CUDA 12
 from src.scores.app_controller import System
-import subprocess
+from utils_path import resource_path
+from TRTUtils import TensorRTConverter
 
 BEST_CONFIDENCE_THRESHOLD = 0.8
 MAX_FRAME_HISTORY = 1000
@@ -43,8 +63,6 @@ FPS_CAMERA = 60
 
 def get_gpu_name():
     try:
-        import subprocess
-        import re
         # Lấy tên GPU hiện tại (VD: NVIDIA GeForce RTX 3050 Ti)
         gpu_name = subprocess.check_output(
             ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'], 
@@ -57,17 +75,26 @@ def get_gpu_name():
         return "unknown_gpu"
 
 if __name__ == '__main__':
-    import sys
-    import os
-    import subprocess
-    import atexit
+    # --- Đóng vai trò là tiến trình con để chạy module python khi gọi từ cupy/cuda.pathfinder (e.g. -m) ---
+    if len(sys.argv) > 2 and sys.argv[1] == '-m':
+        sys.argv.pop(1)  # Bỏ '-m'
+        mod_name = sys.argv[1]
+        sys.argv[0] = sys.argv.pop(1)  # Đưa tên module thành script chính
+        try:
+            runpy.run_module(mod_name, run_name='__main__', alter_sys=True)
+        except SystemExit as se:
+            sys.exit(se.code)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        sys.exit(0)
 
     # --- Đóng vai trò là tiến trình con để Build TensorRT nếu được gọi bằng tham số ---
     if len(sys.argv) == 4 and sys.argv[1] == '--build-trt':
         path_onnx = sys.argv[2]
         path_model = sys.argv[3]
         try:
-            from TRTUtils import TensorRTConverter
             converter = TensorRTConverter()
             if not converter.check_engine_compatibility(path_model):
                 print("[*] Phát hiện engine không tương thích. Đang tiến hành build lại cho GPU này...")
@@ -90,8 +117,6 @@ if __name__ == '__main__':
     # Đăng ký chạy hàm reset khi tắt app
     atexit.register(reset_gpu_clocks)
 
-    from utils_path import resource_path
-    
     app = QApplication(sys.argv)
     
     gpu_name = get_gpu_name()

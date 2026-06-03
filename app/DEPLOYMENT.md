@@ -1,10 +1,28 @@
 # Hướng Dẫn Triển Khai Hệ Thống AI Nhận Diện Biển Số
 
-Hệ thống này được thiết kế với cơ chế **Tự động nhận diện GPU** và **Tự động biên dịch mô hình TensorRT (Engine)**. Bạn có thể dễ dàng sao chép toàn bộ thư mục dự án sang một máy tính Windows khác có card màn hình (NVIDIA GPU) bất kỳ và làm theo hướng dẫn dưới đây.
+Hệ thống này được thiết kế với cơ chế **Tự động nhận diện GPU** và **Tự động biên dịch mô hình TensorRT (Engine)**. Bạn có thể dễ dàng triển khai dự án sang một máy tính Windows khác bằng 1 trong 2 phương pháp dưới đây.
 
 ---
 
-## 1. Cài Đặt Môi Trường Cơ Bản
+## 1. Phương Pháp Miniconda Auto-Installer (Khuyên Dùng cho Người Dùng Cuối)
+
+Đây là phương pháp triển khai chuyên nghiệp và đạt hiệu năng tối đa (100% sức mạnh phần cứng như chạy trực tiếp trên máy phát triển) mà không làm phình to dung lượng tệp đóng gói.
+
+### Cách triển khai cho khách hàng:
+1. Hãy nén toàn bộ thư mục dự án này lại (lưu ý: hãy **xóa/bỏ qua** thư mục `.venv`, `.git`, và thư mục `build/` để giảm dung lượng file nén).
+2. Gửi file nén đó sang máy của khách hàng.
+3. Khách hàng chỉ cần giải nén và kích đúp chạy file **`run_app.bat`**.
+4. **Kịch bản tự động**:
+   * File `run_app.bat` sẽ tự động tải xuống phiên bản Miniconda portable (~70MB).
+   * Tự động giải nén và thiết lập môi trường Python độc lập ngay tại thư mục ứng dụng (không cần quyền Administrator).
+   * Tự động cài đặt đầy đủ tất cả các thư viện cần thiết từ `requirements.txt`.
+   * Khởi chạy ứng dụng AI Parking.
+5. Từ lần chạy thứ 2 trở đi, hệ thống phát hiện đã cài đặt môi trường sẽ kích hoạt chạy thẳng ứng dụng lập tức (chưa tới 1 giây).
+
+---
+
+## 2. Phương Pháp Cài Đặt Thủ Công (Cho Lập Trình Viên)
+
 
 ### Cài đặt Conda và Python
 1. Tải và cài đặt **Miniconda** hoặc **Anaconda**.

@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import os
 import sys
+import time
 
 from .predict_tensorRT import TRTEngineWrapper
 
@@ -15,7 +16,6 @@ def load_model(model_path):
     raise RuntimeError(f"Chỉ hỗ trợ mô hình .onnx hoặc .engine (Đã nhận được: {model_path})")
 
 def predict_license_plate(model, frame, size=(640, 640)):
-    import time
     t_start = time.perf_counter()
     
     # 1. Preprocess
