@@ -1,21 +1,28 @@
 import os
 import sys
 import numpy as np
+import platform
 import ctypes
-
-# Lazy import tensorrt để tránh lỗi C++ conflict với ONNXRuntime
 
 # Nạp thư viện CUDA Runtime
 cudart = None
-cuda_dlls = ['cudart64_12.dll', 'cudart64_110.dll', 'cudart64_100.dll']
+os_name = platform.system()
+
+# Tự động chọn tên file thư viện tùy theo hệ điều hành
+if os_name == "Windows":
+    cuda_dlls = ['cudart64_12.dll', 'cudart64_110.dll', 'cudart64_100.dll']
+else:
+    # Trên Linux (Ubuntu), CUDA Runtime tên là libcudart.so
+    cuda_dlls = ['libcudart.so', 'libcudart.so.12', 'libcudart.so.11.0']
+
 for dll_name in cuda_dlls:
     try:
         cudart = ctypes.CDLL(dll_name)
-        print(f"[+] Loaded CUDA runtime DLL: {dll_name}")
+        print(f"[+] Loaded CUDA runtime DLL for {os_name}: {dll_name}")
         break
     except Exception:
         continue
-
+    
 if cudart is None:
     try:
         # Tạo danh sách đường dẫn cần quét
