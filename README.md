@@ -5,7 +5,7 @@
 <img width="1254" height="714" alt="Screenshot 2026-05-30 152908" src="https://github.com/user-attachments/assets/8093e969-5937-43f5-a448-0e85368a0642" />
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
-![YOLO](https://img.shields.io/badge/AI-YOLO-green)
+![YOLO-RVT](https://img.shields.io/badge/AI-YOLO_RVT-green)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-yellow)
 ![GPU](https://img.shields.io/badge/GPU-NVIDIA-success)
 
