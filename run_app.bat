@@ -46,23 +46,11 @@ if not exist "%PYTHON_EXE%" (
 )
 
 echo [+] Cai dat Miniconda thanh cong!
-echo [*] Dang cai dat cac thu vien phu thuoc tu requirements.txt...
-"%MINICONDA_DIR%\Scripts\pip.exe" install -r "%APP_DIR%\requirements.txt"
-
-if %ERRORLEVEL% neq 0 (
-    echo [!] Loi: Khong the cai dat cac thu vien phu thuoc.
-    pause
-    exit /b 1
-)
-
-echo [+] Cai dat thu vien hoan tat!
-echo.
-
 :RUN_APP
-echo [*] Dang chay ung dung AI Parking...
-cd /d "%APP_DIR%"
-"%PYTHON_EXE%" main.py
+echo [*] Dang khoi chay Giao dien Cai dat / Ung dung...
+cd /d "%~dp0"
+"%PYTHON_EXE%" gui_installer.py
 if %ERRORLEVEL% neq 0 (
-    echo [!] Ung dung da dung lai voi loi: %ERRORLEVEL%.
+    echo [!] Giao dien da dung lai voi loi: %ERRORLEVEL%.
     pause
 )

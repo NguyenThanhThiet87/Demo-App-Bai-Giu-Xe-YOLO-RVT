@@ -4,6 +4,7 @@ venv/
 ENV/
 env/
 miniconda/
+.req_hash
 
 # Python Cache
 __pycache__/
