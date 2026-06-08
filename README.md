@@ -2,7 +2,7 @@
 
 # 🚗 AI Parking Management System
 
-<img width="895" height="567" alt="AI Parking System" src="https://github.com/user-attachments/assets/917624cd-52ef-4ee9-b5ae-4d08b4f8f6e3" />
+<img width="1254" height="714" alt="Screenshot 2026-05-30 152908" src="https://github.com/user-attachments/assets/8093e969-5937-43f5-a448-0e85368a0642" />
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
 ![YOLO](https://img.shields.io/badge/AI-YOLO-green)
