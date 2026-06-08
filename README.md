@@ -4,6 +4,13 @@
 Chào mừng bạn đến với Hệ thống Quản lý Bãi đỗ xe thông minh ứng dụng AI (nhận diện biển số với YOLO). Phần mềm đã được đóng gói kèm theo Trình Cài Đặt Tự Động cực kỳ tiện lợi, giúp bạn khởi chạy ứng dụng chỉ với 1 cú click chuột mà không cần biết về lập trình hay thao tác dòng lệnh.
 
 ---
+## Video Demo Đầu Vào
+
+Bộ video dùng để kiểm thử và đánh giá hệ thống được cung cấp tại liên kết sau:
+
+🔗 [Google Drive Folder](https://drive.google.com/drive/folders/1fYgxYnRbZ4w0RkxoaissDj2lD6Jt09S2?usp=drive_link)
+
+Người dùng có thể tải các video này về và sử dụng làm dữ liệu đầu vào để chạy thử nghiệm, đánh giá hiệu năng và kiểm tra các chức năng của hệ thống.
 
 ## 🚀 Hướng Dẫn Cài Đặt & Chạy Phần Mềm
 
