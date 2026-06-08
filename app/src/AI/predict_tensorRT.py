@@ -11,9 +11,11 @@ os_name = platform.system()
 # Tự động chọn tên file thư viện tùy theo hệ điều hành
 if os_name == "Windows":
     cuda_dlls = ['cudart64_12.dll', 'cudart64_110.dll', 'cudart64_100.dll']
+    lib_prefix, lib_ext, nv_folder = 'cudart64_', '.dll', 'bin'
 else:
     # Trên Linux (Ubuntu), CUDA Runtime tên là libcudart.so
     cuda_dlls = ['libcudart.so', 'libcudart.so.12', 'libcudart.so.11.0']
+    lib_prefix, lib_ext, nv_folder = 'libcudart.so', '', 'lib'
 
 for dll_name in cuda_dlls:
     try:
@@ -36,10 +38,10 @@ if cudart is None:
             
             # Thử load trực tiếp từ _internal trước
             for f in os.listdir(_internal_dir) if os.path.exists(_internal_dir) else []:
-                if f.startswith('cudart64_') and f.endswith('.dll'):
+                if f.startswith(lib_prefix) and f.endswith(lib_ext):
                     try:
                         cudart = ctypes.CDLL(os.path.join(_internal_dir, f))
-                        print(f"[+] Loaded CUDA runtime DLL from _internal: {f}")
+                        print(f"[+] Loaded CUDA runtime from _internal: {f}")
                         break
                     except Exception:
                         pass
@@ -47,13 +49,13 @@ if cudart is None:
         if cudart is None:
             for p in search_paths:
                 if 'site-packages' in p or getattr(sys, 'frozen', False):
-                    rt_dir = os.path.join(p, 'nvidia', 'cuda_runtime', 'bin')
+                    rt_dir = os.path.join(p, 'nvidia', 'cuda_runtime', nv_folder)
                     if os.path.exists(rt_dir):
                         for f in os.listdir(rt_dir):
-                            if f.startswith('cudart64_') and f.endswith('.dll'):
+                            if f.startswith(lib_prefix) and f.endswith(lib_ext):
                                 try:
                                     cudart = ctypes.CDLL(os.path.join(rt_dir, f))
-                                    print(f"[+] Loaded CUDA runtime DLL from site-packages: {f}")
+                                    print(f"[+] Loaded CUDA runtime from site-packages: {f}")
                                     break
                                 except Exception:
                                     pass
