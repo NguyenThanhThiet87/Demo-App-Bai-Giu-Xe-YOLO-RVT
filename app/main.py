@@ -96,12 +96,53 @@ if __name__ == '__main__':
         path_model = sys.argv[3]
         try:
             converter = TensorRTConverter()
-            if not converter.check_engine_compatibility(path_model):
-                print("[*] Phát hiện engine không tương thích. Đang tiến hành build lại cho GPU này...")
-                success = converter.convert_onnx_to_engine(path_onnx, path_model)
-                sys.exit(0 if success else 1)
-            else:
+            if converter.check_engine_compatibility(path_model):
                 sys.exit(0)
+                
+            print("[*] Phát hiện engine không tương thích. Đang tiến hành build lại cho GPU này...")
+            
+            import tkinter as tk
+            from tkinter import ttk
+            import threading
+            
+            splash = tk.Tk()
+            splash.overrideredirect(True)
+            splash.configure(bg='#1e1e1e', highlightbackground='#00aa00', highlightthickness=2)
+            
+            width, height = 450, 160
+            x = (splash.winfo_screenwidth() // 2) - (width // 2)
+            y = (splash.winfo_screenheight() // 2) - (height // 2)
+            splash.geometry(f'{width}x{height}+{x}+{y}')
+            
+            lbl_title = tk.Label(splash, text="TỐI ƯU HÓA MÔ HÌNH AI", font=("Helvetica", 14, "bold"), bg='#1e1e1e', fg='white')
+            lbl_title.pack(pady=(25, 10))
+            
+            lbl_loading = tk.Label(splash, text="Đang biên dịch TensorRT Engine cho GPU của bạn...\nQuá trình này có thể mất từ 1-5 phút (chỉ chạy lần đầu).", font=("Helvetica", 10), bg='#1e1e1e', fg='#00ff00')
+            lbl_loading.pack(pady=(0, 15))
+
+            progress = ttk.Progressbar(splash, orient="horizontal", length=350, mode="indeterminate")
+            progress.pack()
+            progress.start(10)
+            
+            splash.done = False
+            splash.success = False
+            
+            def build_task():
+                splash.success = converter.convert_onnx_to_engine(path_onnx, path_model)
+                splash.done = True
+                
+            threading.Thread(target=build_task, daemon=True).start()
+            
+            def check_done():
+                if splash.done:
+                    splash.destroy()
+                else:
+                    splash.after(100, check_done)
+                    
+            splash.after(100, check_done)
+            splash.mainloop()
+            sys.exit(0 if splash.success else 1)
+            
         except Exception as e:
             print(f"[-] Lỗi TensorRT subprocess: {e}")
             sys.exit(1)
