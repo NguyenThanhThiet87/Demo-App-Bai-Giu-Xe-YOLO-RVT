@@ -135,6 +135,18 @@ Từ những lần sử dụng tiếp theo, chỉ cần nhấp đúp vào biểu
 
 ---
 
+## 📄 Source Code Training
+
+Mã nguồn huấn luyện mô hình nhận diện biển số xe được sử dụng trong nghiên cứu và triển khai hệ thống được cung cấp tại:
+
+🔗 **GitHub Repository**
+
+https://github.com/NguyenThanhThiet87/YOLO_RVT_30Per
+
+Repository bao gồm toàn bộ mã nguồn phục vụ quá trình huấn luyện, đánh giá và xuất mô hình YOLO-RVT được sử dụng trong hệ thống AI Parking Management System.
+
+---
+
 ## 📄 License
 
 Dự án được phát triển phục vụ mục đích học tập, nghiên cứu và trình diễn công nghệ AI trong quản lý bãi đỗ xe.
